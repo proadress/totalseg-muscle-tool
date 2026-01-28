@@ -5,6 +5,7 @@ import numpy as np
 import SimpleITK as sitk
 from PIL import Image, ImageDraw, ImageFont
 import colorsys
+import cv2
 
 
 def validate_path_ascii(path: Path):
@@ -153,6 +154,31 @@ def draw_spine_label(image, spine_label):
     draw.text((x, y), labeltext, fill=(255, 255, 255, 255), font=font)
 
 
+def erode_mask_slice(mask_slice, erosion_iters):
+    if erosion_iters <= 0:
+        return mask_slice.astype(bool)
+
+    mask_u8 = mask_slice.astype(np.uint8)
+    original_pixels = np.sum(mask_u8 > 0)
+    if original_pixels == 0:
+        return mask_u8.astype(bool)
+
+    kernel = np.ones((3, 3), np.uint8)
+    eroded = cv2.erode(mask_u8, kernel, iterations=erosion_iters)
+    eroded_pixels = np.sum(eroded > 0)
+
+    if erosion_iters > 3 and (
+        eroded_pixels < 50 or eroded_pixels < original_pixels * 0.2
+    ):
+        eroded = cv2.erode(mask_u8, kernel, iterations=3)
+        eroded_pixels = np.sum(eroded > 0)
+
+    if eroded_pixels < 20:
+        eroded = mask_u8
+
+    return eroded.astype(bool)
+
+
 def dicom_to_overlay_png(
     dicom_dir: Path,
     out_dir: Path,
@@ -160,6 +186,8 @@ def dicom_to_overlay_png(
     show_spine=True,
     task_name=None,
     fast=False,
+    erosion_iters=0,
+    eroded_out_dir: Path = None,
 ):
     validate_path_ascii(dicom_dir)
     validate_path_ascii(out_dir)
@@ -187,7 +215,10 @@ def dicom_to_overlay_png(
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    if eroded_out_dir and erosion_iters > 0:
+        eroded_out_dir.mkdir(parents=True, exist_ok=True)
     output_count = 0
+    eroded_output_count = 0
 
     for idx, dicom_file in enumerate(files):
         try:
@@ -197,8 +228,10 @@ def dicom_to_overlay_png(
             base_u8 = (windowed * 255.0 + 0.5).astype(np.uint8)
             base_rgb = np.stack([base_u8] * 3, axis=-1).astype(np.float32)
             overlay_rgb = base_rgb.copy()
+            overlay_eroded_rgb = base_rgb.copy() if eroded_out_dir and erosion_iters > 0 else None
 
             slice_labels = []
+            slice_labels_eroded = []
             for name, mask_arr in all_masks:
                 mask_slice = mask_arr[idx] > 0
                 if np.any(mask_slice):
@@ -208,6 +241,15 @@ def dicom_to_overlay_png(
                         overlay_rgb[mask_slice, c] = (
                             overlay_rgb[mask_slice, c] * 0.4 + color[c] * 0.6
                         )
+                if overlay_eroded_rgb is not None:
+                    eroded_slice = erode_mask_slice(mask_slice, erosion_iters)
+                    if np.any(eroded_slice):
+                        slice_labels_eroded.append(name)
+                        color = color_map.get(name, (255, 0, 0))
+                        for c in range(3):
+                            overlay_eroded_rgb[eroded_slice, c] = (
+                                overlay_eroded_rgb[eroded_slice, c] * 0.4 + color[c] * 0.6
+                            )
 
             overlay_img = Image.fromarray(np.clip(overlay_rgb, 0, 255).astype(np.uint8))
             draw_legend(overlay_img, list(dict.fromkeys(slice_labels)), color_map)
@@ -219,6 +261,21 @@ def dicom_to_overlay_png(
             overlay_img.save(out_dir / png_filename)
             output_count += 1
 
+            if overlay_eroded_rgb is not None:
+                overlay_eroded_img = Image.fromarray(
+                    np.clip(overlay_eroded_rgb, 0, 255).astype(np.uint8)
+                )
+                draw_legend(
+                    overlay_eroded_img,
+                    list(dict.fromkeys(slice_labels_eroded)),
+                    color_map,
+                )
+                if show_spine:
+                    label = find_spine_label(idx, dicom_dir, fast)
+                    draw_spine_label(overlay_eroded_img, label)
+                overlay_eroded_img.save(eroded_out_dir / png_filename)
+                eroded_output_count += 1
+
         except Exception as e:
             print(
                 f"⚠ [WARNING] Overlay failed for slice {idx}: {files[idx]}, error: {e}"
@@ -226,6 +283,10 @@ def dicom_to_overlay_png(
             continue
 
     print(f"✅ [SUCCESS] Total overlays saved: {output_count} in {out_dir}")
+    if eroded_out_dir and erosion_iters > 0:
+        print(
+            f"✅ [SUCCESS] Total eroded overlays saved: {eroded_output_count} in {eroded_out_dir}"
+        )
 
 
 def main():
@@ -248,6 +309,12 @@ def main():
     parser.add_argument(
         "--fast", type=int, default=0, help="Use fast segmentation (1=Yes)"
     )
+    parser.add_argument(
+        "--erosion_iters",
+        type=int,
+        default=7,
+        help="Erosion iterations for eroded PNG output (default: 7)",
+    )
 
     args = parser.parse_args()
 
@@ -263,6 +330,7 @@ def main():
     seg_folder_name = f"segmentation_{args.task}" + ("_fast" if args.fast else "")
     seg_output = output_base / seg_folder_name
     png_folder = output_base / "png"
+    png_eroded_folder = output_base / "png_eroded"
 
     # === Debug output ===
     print("\n" + "=" * 60)
@@ -272,6 +340,7 @@ def main():
     print(f"  Output base:       {output_base}")
     print(f"  Mask folder:       {seg_output}")
     print(f"  PNG folder:        {png_folder}")
+    print(f"  PNG eroded folder: {png_eroded_folder}")
     print("=" * 60 + "\n")
 
     # === Error checking ===
@@ -299,6 +368,8 @@ def main():
             show_spine=bool(args.spine),
             task_name=args.task,
             fast=bool(args.fast),
+            erosion_iters=args.erosion_iters,
+            eroded_out_dir=png_eroded_folder,
         )
     except Exception as ex:
         print(f"\n❌ [FATAL ERROR] Unexpected error during drawing:")

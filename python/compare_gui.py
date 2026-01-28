@@ -55,6 +55,95 @@ def calculate_dice(mask1, mask2):
     return 2.0 * intersection / total
 
 
+def calculate_jaccard(mask1, mask2):
+    """
+    計算 Jaccard 相似係數 (IoU)
+
+    Jaccard = |A ∩ B| / |A ∪ B|
+    """
+    mask1_bool = mask1 > 0
+    mask2_bool = mask2 > 0
+    intersection = np.sum(mask1_bool & mask2_bool)
+    union = np.sum(mask1_bool | mask2_bool)
+    if union == 0:
+        return 0.0
+    return float(intersection) / float(union)
+
+
+def calculate_precision_recall(mask_pred, mask_gt):
+    """
+    計算 Precision / Recall（以 GT 為標準）
+    """
+    pred = mask_pred > 0
+    gt = mask_gt > 0
+    tp = np.sum(pred & gt)
+    fp = np.sum(pred & (~gt))
+    fn = np.sum((~pred) & gt)
+
+    precision = float(tp) / float(tp + fp) if (tp + fp) > 0 else 0.0
+    recall = float(tp) / float(tp + fn) if (tp + fn) > 0 else 0.0
+    return precision, recall
+
+
+def _surface_distances(mask_a, mask_b, spacing_xy):
+    """
+    計算 A 的邊界到 B 邊界的距離 (mm)
+    """
+    img_a = sitk.GetImageFromArray(mask_a.astype(np.uint8))
+    img_b = sitk.GetImageFromArray(mask_b.astype(np.uint8))
+    img_a.SetSpacing((spacing_xy[0], spacing_xy[1]))
+    img_b.SetSpacing((spacing_xy[0], spacing_xy[1]))
+
+    contour_a = sitk.BinaryContour(img_a, fullyConnected=True)
+    contour_b = sitk.BinaryContour(img_b, fullyConnected=True)
+    contour_a_arr = sitk.GetArrayFromImage(contour_a) > 0
+    contour_b_arr = sitk.GetArrayFromImage(contour_b) > 0
+
+    # 極小物件可能導致 contour 空，退回用 mask 本身
+    if not np.any(contour_a_arr):
+        contour_a_arr = mask_a > 0
+    if not np.any(contour_b_arr):
+        contour_b_arr = mask_b > 0
+
+    dist_map_b = sitk.SignedMaurerDistanceMap(
+        img_b,
+        squaredDistance=False,
+        useImageSpacing=True,
+        insideIsPositive=False,
+    )
+    dist_map_b_arr = sitk.GetArrayFromImage(dist_map_b)
+
+    distances = np.abs(dist_map_b_arr[contour_a_arr])
+    return distances
+
+
+def calculate_surface_metrics(mask1, mask2, spacing_xy):
+    """
+    計算 HD / HD95 / ASSD（單層 2D, 單位 mm）
+    """
+    mask1_bool = mask1 > 0
+    mask2_bool = mask2 > 0
+
+    if not np.any(mask1_bool) and not np.any(mask2_bool):
+        return {"hd": 0.0, "hd95": 0.0, "assd": 0.0}
+
+    if not np.any(mask1_bool) or not np.any(mask2_bool):
+        return {"hd": float("inf"), "hd95": float("inf"), "assd": float("inf")}
+
+    dist_1_to_2 = _surface_distances(mask1_bool, mask2_bool, spacing_xy)
+    dist_2_to_1 = _surface_distances(mask2_bool, mask1_bool, spacing_xy)
+
+    if dist_1_to_2.size == 0 or dist_2_to_1.size == 0:
+        return {"hd": float("inf"), "hd95": float("inf"), "assd": float("inf")}
+
+    combined = np.concatenate([dist_1_to_2, dist_2_to_1])
+    hd = float(max(dist_1_to_2.max(), dist_2_to_1.max()))
+    hd95 = float(np.percentile(combined, 95))
+    assd = float(np.mean(combined))
+
+    return {"hd": hd, "hd95": hd95, "assd": assd}
+
+
 def calculate_area(mask_slice, spacing):
     """
     計算單層 mask 的面積（與 seg.py 一致的邏輯）
@@ -251,13 +340,7 @@ def compare_segmentations(ai_nii_path, manual_nrrd_path):
         manual_nrrd_path: str or Path - 手動標註 (.seg.nrrd)
 
     Returns:
-        dict: {
-            'slice_number': int,
-            'manual_area': float,
-            'ai_area': float,
-            'dice_score': float,
-            'segment_name': str
-        }
+        dict: 單層比較結果
 
     Raises:
         FileNotFoundError: 檔案不存在
@@ -344,14 +427,29 @@ def compare_segmentations(ai_nii_path, manual_nrrd_path):
 
     # 計算 Dice
     dice_score = calculate_dice(manual_slice, ai_slice)
+    jaccard_score = calculate_jaccard(manual_slice, ai_slice)
+    precision, recall = calculate_precision_recall(ai_slice, manual_slice)
+    surface_metrics = calculate_surface_metrics(ai_slice, manual_slice, ai_spacing[:2])
 
     # 計算面積（使用 AI 的 spacing，因為已經對齊）
     manual_area = calculate_area(manual_slice, ai_spacing[:2])
     ai_area = calculate_area(ai_slice, ai_spacing[:2])
+    area_diff = ai_area - manual_area
+    area_diff_abs = abs(area_diff)
+    area_diff_pct = (area_diff / manual_area * 100.0) if manual_area > 0 else None
 
     print(f"  [OK] Dice 係數: {dice_score:.4f}")
+    print(f"  [OK] Jaccard: {jaccard_score:.4f}")
+    print(f"  [OK] Precision: {precision:.4f}")
+    print(f"  [OK] Recall: {recall:.4f}")
     print(f"  [OK] 手動面積: {manual_area:.2f} cm^2")
     print(f"  [OK] AI 面積: {ai_area:.2f} cm^2")
+    print(f"  [OK] 面積差: {area_diff:+.2f} cm^2")
+    if area_diff_pct is not None:
+        print(f"  [OK] 面積差(%): {area_diff_pct:+.2f}%")
+    print(f"  [OK] HD: {surface_metrics['hd']:.2f} mm")
+    print(f"  [OK] HD95: {surface_metrics['hd95']:.2f} mm")
+    print(f"  [OK] ASSD: {surface_metrics['assd']:.2f} mm")
 
     print("\n" + "=" * 60)
     print("[SUCCESS] 比較完成！")
@@ -362,6 +460,15 @@ def compare_segmentations(ai_nii_path, manual_nrrd_path):
         "manual_area": manual_area,
         "ai_area": ai_area,
         "dice_score": dice_score,
+        "jaccard_score": jaccard_score,
+        "precision": precision,
+        "recall": recall,
+        "hd": surface_metrics["hd"],
+        "hd95": surface_metrics["hd95"],
+        "assd": surface_metrics["assd"],
+        "area_diff": area_diff,
+        "area_diff_abs": area_diff_abs,
+        "area_diff_pct": area_diff_pct,
         "segment_name": segment_name,
     }
 
@@ -375,6 +482,19 @@ BG = "#f5f8fc"
 PRIMARY = "#22223b"
 FONT_FACE = "Segoe UI"
 FONT_SIZE = 10
+
+
+def format_metric(value, fmt, na="N/A"):
+    if value is None:
+        return na
+    try:
+        if not np.isfinite(value):
+            return na
+    except Exception:
+        pass
+    return fmt.format(value)
+
+
 
 
 class CompareApp:
@@ -532,14 +652,30 @@ class CompareApp:
         self.result_data = result
 
         # 格式化結果文字
+        area_diff_pct_text = format_metric(
+            result["area_diff_pct"], "{:+.2f}%", na="N/A"
+        )
+        hd_text = format_metric(result["hd"], "{:.2f}", na="N/A")
+        hd95_text = format_metric(result["hd95"], "{:.2f}", na="N/A")
+        assd_text = format_metric(result["assd"], "{:.2f}", na="N/A")
+
         result_text = f"""[SUCCESS] 比較完成！
 
 層數 (Slice Number):  {result['slice_number']}
 
 手動面積:  {result['manual_area']:.2f} cm^2
 AI 面積:    {result['ai_area']:.2f} cm^2
+面積差:    {result['area_diff']:+.2f} cm^2
+面積差(%): {area_diff_pct_text}
 
 Dice 分數:  {result['dice_score']:.4f}
+Jaccard:   {result['jaccard_score']:.4f}
+Precision: {result['precision']:.4f}
+Recall:    {result['recall']:.4f}
+
+HD (mm):   {hd_text}
+HD95 (mm): {hd95_text}
+ASSD (mm): {assd_text}
 
 Segment 名稱: {result['segment_name']}
 """
@@ -578,14 +714,39 @@ Segment 名稱: {result['segment_name']}
             with open(csv_file, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow(
-                    ["slice_number", "manual_area_cm2", "ai_area_cm2", "dice_score"]
+                    [
+                        "slice_number",
+                        "manual_area_cm2",
+                        "ai_area_cm2",
+                        "area_diff_cm2",
+                        "area_diff_abs_cm2",
+                        "area_diff_pct",
+                        "dice_score",
+                        "jaccard_score",
+                        "precision",
+                        "recall",
+                        "hd_mm",
+                        "hd95_mm",
+                        "assd_mm",
+                    ]
                 )
                 writer.writerow(
                     [
                         self.result_data["slice_number"],
                         f"{self.result_data['manual_area']:.2f}",
                         f"{self.result_data['ai_area']:.2f}",
+                        f"{self.result_data['area_diff']:+.2f}",
+                        f"{self.result_data['area_diff_abs']:.2f}",
+                        format_metric(
+                            self.result_data["area_diff_pct"], "{:+.2f}%", na="N/A"
+                        ),
                         f"{self.result_data['dice_score']:.4f}",
+                        f"{self.result_data['jaccard_score']:.4f}",
+                        f"{self.result_data['precision']:.4f}",
+                        f"{self.result_data['recall']:.4f}",
+                        format_metric(self.result_data["hd"], "{:.2f}", na="N/A"),
+                        format_metric(self.result_data["hd95"], "{:.2f}", na="N/A"),
+                        format_metric(self.result_data["assd"], "{:.2f}", na="N/A"),
                     ]
                 )
 

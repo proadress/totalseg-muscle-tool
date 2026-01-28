@@ -93,7 +93,7 @@
 ```powershell
 cd python
 uv sync
-uv run seg.py --dicom ..\\SER00005 --task tissue_4_types --spine 0 --fast 0 --auto_draw 1
+uv run seg.py --dicom ..\\SER00005 --task tissue_4_types --spine 0 --fast 0 --auto_draw 1 --erosion_iters 7
 ```
 
 `seg.py` 參數（重點）：
@@ -103,12 +103,13 @@ uv run seg.py --dicom ..\\SER00005 --task tissue_4_types --spine 0 --fast 0 --au
 - `--fast 1`：加速模式（較快但精度可能下降；某些 task 不支援）
 - `--spine 1`：額外跑脊椎分割（會用 `total` task 的 `vertebrae_*` ROI 子集合；固定 fast）
 - `--auto_draw 1`：分割完成後自動執行 `draw.py` 產 PNG overlay
+- `--erosion_iters`：HU 計算用的侵蝕次數（預設 7；像素太少時會改成 3 或不侵蝕）
 
 只畫 PNG overlay（不重跑分割）：
 
 ```powershell
 cd python
-uv run draw.py --dicom ..\\SER00005 --task tissue_4_types --fast 0 --spine 1
+uv run draw.py --dicom ..\\SER00005 --task tissue_4_types --fast 0 --spine 1 --erosion_iters 7
 ```
 
 ---
@@ -120,10 +121,11 @@ uv run draw.py --dicom ..\\SER00005 --task tissue_4_types --fast 0 --spine 1
 以輸入 `SER00005/`、未指定 `--out` 為例，輸出會在 `SER00005` 同層建立 `SER00005_output/`：
 
 - `SER00005_output/segmentation_<task>/`：每個結構一個 mask（`*.nii.gz`），並含 `statistics.json`
-- `SER00005_output/mask_<task>.csv`：分析結果（分成 3 個區塊）
+- `SER00005_output/mask_<task>.csv`：分析結果（分成 4 個區塊）
   - 區塊 1：每個 slice 的面積（cm2）
   - 區塊 2：每個 slice 的平均 HU（會先做 mask 侵蝕再取 HU；並把左右肌肉做面積加權合併）
-  - 區塊 3：整體 summary（pixelcount / volume_cm3 / mean_hu；左右肌肉會合併）
+  - 區塊 3：每個 slice 的 HU 標準差（同樣使用侵蝕後區域；左右肌肉面積加權合併）
+  - 區塊 4：整體 summary（pixelcount / volume_cm3 / mean_hu；左右肌肉會合併）
 - `SER00005_output/png/`：每張 slice 一張 overlay PNG（若有開啟輸出）
 
 ### 程式2：比較工具輸出
@@ -147,6 +149,7 @@ slice_number, manual_area_cm2, ai_area_cm2, dice_score
 - 面積（cm2）：每個 slice 的 mask 像素數 × `spacing_x × spacing_y / 100`
 - 體積（cm3）：所有 mask 像素數 × `spacing_x × spacing_y × spacing_z / 1000`
 - slice 平均 HU：對該 slice mask 做形態學侵蝕（預設 7 次，像素太少會降為 3 次或不侵蝕）後，取侵蝕後區域的 HU 平均
+- slice HU 標準差：同上侵蝕流程，取侵蝕後區域的 HU 標準差
 - 左右合併（HU）：以每個 slice 的左右面積做加權平均
 - summary 合併（mean_hu）：以 pixelcount 做加權平均
 

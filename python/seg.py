@@ -16,7 +16,7 @@ VERTEBRAE_LABELS = (
 )
 
 
-def calculate_slice_hu_with_erosion(slice_mask, slice_ct):
+def calculate_slice_hu_with_erosion(slice_mask, slice_ct, erosion_iters=7):
     """
     使用侵蝕 7 次計算 HU（與醫生測量最接近，誤差 1.08 HU）
 
@@ -28,34 +28,42 @@ def calculate_slice_hu_with_erosion(slice_mask, slice_ct):
         float: 平均 HU 值
     """
     if np.sum(slice_mask > 0) == 0:
-        return 0.0
+        return 0.0, 0.0
 
     original_pixels = np.sum(slice_mask > 0)
 
-    # 步驟 1：侵蝕 7 次（去除邊緣約 4.6 mm）
+    # 步驟 1：侵蝕 N 次（預設 7；去除邊緣約 4.6 mm）
     kernel = np.ones((3, 3), np.uint8)
-    eroded_mask = cv2.erode(slice_mask.astype(np.uint8), kernel, iterations=7)
+    erosion_iters = max(int(erosion_iters), 0)
+    if erosion_iters > 0:
+        eroded_mask = cv2.erode(
+            slice_mask.astype(np.uint8), kernel, iterations=erosion_iters
+        )
+    else:
+        eroded_mask = slice_mask.astype(np.uint8)
 
     eroded_pixels = np.sum(eroded_mask > 0)
 
     # 步驟 2：如果像素太少，減少侵蝕次數
-    if eroded_pixels < 50 or eroded_pixels < original_pixels * 0.2:
+    if erosion_iters > 3 and (
+        eroded_pixels < 50 or eroded_pixels < original_pixels * 0.2
+    ):
         eroded_mask = cv2.erode(slice_mask.astype(np.uint8), kernel, iterations=3)
         eroded_pixels = np.sum(eroded_mask > 0)
 
     # 步驟 3：如果還是太少，不侵蝕
     if eroded_pixels < 20:
-        eroded_mask = slice_mask
+        eroded_mask = slice_mask.astype(np.uint8)
 
     hu_values = slice_ct[eroded_mask > 0]
 
     if len(hu_values) > 0:
-        return float(np.mean(hu_values))
+        return float(np.mean(hu_values)), float(np.std(hu_values))
     else:
-        return 0.0
+        return 0.0, 0.0
 
 
-def get_mask_area_volume_and_hu(nii_path, ct_arr, spacing, resampler):
+def get_mask_area_volume_and_hu(nii_path, ct_arr, spacing, resampler, erosion_iters=7):
     """
     計算每個 slice 的面積、總體積、以及每個 slice 的平均 HU
 
@@ -69,6 +77,8 @@ def get_mask_area_volume_and_hu(nii_path, ct_arr, spacing, resampler):
         slice_area: 每個 slice 的面積 (cm²)
         total_volume: 總體積 (cm³)
         slice_mean_hu: 每個 slice 的平均 HU
+        slice_std_hu: 每個 slice 的 HU 標準差
+        total_pixels: mask 的總像素數
     """
     mask_img = sitk.ReadImage(str(nii_path))
     mask_arr = sitk.GetArrayFromImage(resampler.Execute(mask_img))
@@ -76,19 +86,25 @@ def get_mask_area_volume_and_hu(nii_path, ct_arr, spacing, resampler):
     slice_area = (
         np.sum(mask_arr > 0, axis=(1, 2)) * spacing[0] * spacing[1] / 100
     )  # cm²
-    total_volume = float(np.sum(mask_arr > 0) * np.prod(spacing) / 1000)  # cm³
+    total_pixels = int(np.sum(mask_arr > 0))
+    total_volume = float(total_pixels * np.prod(spacing) / 1000)  # cm³
 
     slice_mean_hu = []
+    slice_std_hu = []
     for i in range(mask_arr.shape[0]):
         slice_mask = mask_arr[i, :, :]
         slice_ct = ct_arr[i, :, :]
 
-        mean_hu = calculate_slice_hu_with_erosion(slice_mask, slice_ct)
+        mean_hu, std_hu = calculate_slice_hu_with_erosion(
+            slice_mask, slice_ct, erosion_iters
+        )
         slice_mean_hu.append(round(mean_hu, 2))
+        slice_std_hu.append(round(std_hu, 2))
 
     slice_mean_hu = np.array(slice_mean_hu)
+    slice_std_hu = np.array(slice_std_hu)
 
-    return slice_area, total_volume, slice_mean_hu
+    return slice_area, total_volume, slice_mean_hu, slice_std_hu, total_pixels
 
 
 def merge_bilateral_hu_data(area_results, hu_results):
@@ -160,13 +176,75 @@ def merge_bilateral_hu_data(area_results, hu_results):
     return merged_hu, list(merged_hu.keys())
 
 
-def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir):
+def merge_bilateral_std_data(area_results, hu_results, std_results):
+    """
+    合併左右肌肉的 HU 標準差（按面積加權）
+    """
+    merged_std = {}
+    processed = set()
+
+    for muscle in std_results.keys():
+        if muscle in processed:
+            continue
+
+        if muscle.endswith("_left"):
+            base_name = muscle.replace("_left", "")
+            right_name = f"{base_name}_right"
+
+            if right_name in std_results:
+                left_area = area_results[muscle]
+                right_area = area_results[right_name]
+                left_mean = hu_results[muscle]
+                right_mean = hu_results[right_name]
+                left_std = std_results[muscle]
+                right_std = std_results[right_name]
+
+                total_area = left_area + right_area
+                merged = np.zeros_like(total_area)
+
+                for i in range(len(total_area)):
+                    if total_area[i] > 0:
+                        mu = (
+                            left_area[i] * left_mean[i] + right_area[i] * right_mean[i]
+                        ) / total_area[i]
+                        var = (
+                            left_area[i]
+                            * (left_std[i] ** 2 + (left_mean[i] - mu) ** 2)
+                            + right_area[i]
+                            * (right_std[i] ** 2 + (right_mean[i] - mu) ** 2)
+                        ) / total_area[i]
+                        merged[i] = np.sqrt(var)
+                    else:
+                        merged[i] = 0
+
+                merged_std[base_name] = np.round(merged, 2)
+                processed.add(muscle)
+                processed.add(right_name)
+            else:
+                merged_std[muscle] = std_results[muscle]
+                processed.add(muscle)
+
+        elif muscle.endswith("_right"):
+            base_name = muscle.replace("_right", "")
+            left_name = f"{base_name}_left"
+            if left_name not in std_results:
+                merged_std[muscle] = std_results[muscle]
+                processed.add(muscle)
+        else:
+            merged_std[muscle] = std_results[muscle]
+            processed.add(muscle)
+
+    return merged_std, list(merged_std.keys())
+
+
+def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir, erosion_iters=7):
     """
     匯出每個 slice 的面積和 HU 值到 CSV
 
     ✅ 修改：
     - 第一部分（面積）：保持左右分開
     - 第二部分（HU）：合併左右，按面積加權平均
+    - 第三部分（HU std）：合併左右，按面積加權
     """
     print("Starting to export slice areas, HU values, and total volumes to CSV...")
 
@@ -191,19 +269,24 @@ def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir):
 
     area_results = {}
     hu_results = {}
+    hu_std_results = {}
 
     for fname in mask_files:
         nii_path = Path(mask_dir) / fname
-        slice_area, _, slice_mean_hu = get_mask_area_volume_and_hu(
-            nii_path, ct_arr, spacing, resampler
+        slice_area, _, slice_mean_hu, slice_std_hu, _ = get_mask_area_volume_and_hu(
+            nii_path, ct_arr, spacing, resampler, erosion_iters
         )
 
         muscle_name = fname.replace(".nii.gz", "")
         area_results[muscle_name] = np.round(slice_area, 2)
         hu_results[muscle_name] = slice_mean_hu
+        hu_std_results[muscle_name] = slice_std_hu
 
     # ✅ 合併左右的 HU 數據
     merged_hu, merged_muscles = merge_bilateral_hu_data(area_results, hu_results)
+    merged_std, merged_std_muscles = merge_bilateral_std_data(
+        area_results, hu_results, hu_std_results
+    )
 
     max_slices = max(len(area) for area in area_results.values())
 
@@ -238,19 +321,33 @@ def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir):
                     row.append("0.00")
             writer.writerow(row)
 
-        # === 第三部分：總體積（暫時保持左右分開，稍後在 merge_statistics_to_csv 合併）===
+        # === 第三部分：每個 slice 的 HU 標準差（合併左右）===
+        writer.writerow([])
+        writer.writerow(["slicenumber"] + merged_std_muscles)
+
+        for i in range(max_slices, 0, -1):
+            row = [max_slices - i + 1]
+            for muscle in merged_std_muscles:
+                if i <= len(merged_std[muscle]):
+                    val = merged_std[muscle][i - 1]
+                    row.append(f"{val:.2f}")
+                else:
+                    row.append("0.00")
+            writer.writerow(row)
+
+        # === 第四部分：總體積（暫時保持左右分開，稍後在 merge_statistics_to_csv 合併）===
         writer.writerow([])
         writer.writerow(["structure", "pixelcount", "volume_cm3"])
 
         for fname in mask_files:
             nii_path = Path(mask_dir) / fname
-            pixels, volume, _ = get_mask_area_volume_and_hu(
-                nii_path, ct_arr, spacing, resampler
+            _, volume, _, _, total_pixels = get_mask_area_volume_and_hu(
+                nii_path, ct_arr, spacing, resampler, erosion_iters
             )
             writer.writerow(
                 [
                     fname.replace(".nii.gz", ""),
-                    int(np.sum(pixels)),
+                    total_pixels,
                     round(float(volume), 2),
                 ]
             )
@@ -441,6 +538,12 @@ def main():
         default=0,
         help="Auto run draw after segment (1=yes, 0=no)",
     )
+    parser.add_argument(
+        "--erosion_iters",
+        type=int,
+        default=7,
+        help="Erosion iterations for HU calculation (default: 7)",
+    )
 
     args = parser.parse_args()
 
@@ -465,7 +568,9 @@ def main():
     csv_name = f"mask_{args.task}" + ("_fast" if args.fast else "") + ".csv"
     output_csv = output_base / csv_name
 
-    export_areas_and_volumes_to_csv(seg_output, str(output_csv), dicom_path)
+    export_areas_and_volumes_to_csv(
+        seg_output, str(output_csv), dicom_path, erosion_iters=args.erosion_iters
+    )
     merge_statistics_to_csv(seg_output, str(output_csv))
 
     if args.spine and args.task != "total":
@@ -486,7 +591,10 @@ def main():
         output_spine_csv = output_base / spine_csv_name
 
         export_areas_and_volumes_to_csv(
-            seg_spine_output, str(output_spine_csv), dicom_path
+            seg_spine_output,
+            str(output_spine_csv),
+            dicom_path,
+            erosion_iters=args.erosion_iters,
         )
         merge_statistics_to_csv(seg_spine_output, str(output_spine_csv))
 
@@ -507,6 +615,8 @@ def main():
                 str(args.spine),
                 "--fast",
                 str(args.fast),
+                "--erosion_iters",
+                str(args.erosion_iters),
             ],
             check=True,
         )

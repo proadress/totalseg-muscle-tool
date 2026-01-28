@@ -3,6 +3,10 @@ import subprocess
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
+try:
+    import SimpleITK as sitk
+except Exception:
+    sitk = None
 
 BG = "#f5f8fc"
 PRIMARY = "#22223b"
@@ -20,6 +24,9 @@ task_var = tk.StringVar(value="abdominal_muscles")
 spine_var = tk.BooleanVar(value=True)
 fast_var = tk.BooleanVar(value=False)
 draw_var = tk.BooleanVar(value=True)
+erosion_iters_var = tk.IntVar(value=7)
+erosion_mm_var = tk.StringVar(value="Approx erosion: N/A")
+spacing_xy = None
 
 # Check GPU or CPU
 try:
@@ -46,6 +53,7 @@ def browse_dicom():
         dicom_var.set(f)
         parent_folder = str(Path(f).parent)
         output_var.set(parent_folder)
+        update_spacing_and_erosion(f)
         validate()
 
 ttk.Button(frame, text="Browse...", command=browse_dicom).grid(
@@ -62,6 +70,44 @@ def validate(*_):
     btn_start.state(
         ["!disabled"] if dicom_var.get() and output_var.get() else ["disabled"]
     )
+
+
+def update_spacing_and_erosion(dicom_dir):
+    global spacing_xy
+    if sitk is None:
+        spacing_xy = None
+        update_erosion_label()
+        return
+    try:
+        reader = sitk.ImageSeriesReader()
+        files = reader.GetGDCMSeriesFileNames(str(dicom_dir))
+        if not files:
+            spacing_xy = None
+        else:
+            img = sitk.ReadImage(files[0])
+            spacing = img.GetSpacing()
+            spacing_xy = (spacing[0], spacing[1])
+    except Exception:
+        spacing_xy = None
+    update_erosion_label()
+
+
+def update_erosion_label(*_):
+    try:
+        iters = int(erosion_iters_var.get())
+    except Exception:
+        erosion_mm_var.set("Approx erosion: N/A")
+        return
+
+    if spacing_xy and iters >= 0:
+        avg_spacing = (spacing_xy[0] + spacing_xy[1]) / 2.0
+        approx_mm = iters * avg_spacing
+        erosion_mm_var.set(f"Approx erosion: {approx_mm:.2f} mm")
+    else:
+        erosion_mm_var.set("Approx erosion: N/A")
+
+
+erosion_iters_var.trace_add("write", update_erosion_label)
 
 ttk.Label(frame, text="Output Dir:").grid(row=4, column=0, sticky="w", pady=(14, 0))
 output_entry = ttk.Entry(frame, textvariable=output_var, width=26)
@@ -130,8 +176,17 @@ ttk.Checkbutton(
     variable=fast_var,
 ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
+ttk.Label(frame, text="Erosion iterations (HU):").grid(
+    row=11, column=0, sticky="w", pady=(12, 0)
+)
+erosion_entry = ttk.Entry(frame, textvariable=erosion_iters_var, width=8)
+erosion_entry.grid(row=12, column=0, sticky="w", pady=4)
+ttk.Label(frame, textvariable=erosion_mm_var).grid(
+    row=13, column=0, columnspan=2, sticky="w", pady=(0, 4)
+)
+
 ttk.Checkbutton(frame, text="Export PNG overlays", variable=draw_var).grid(
-    row=11, column=0, columnspan=2, sticky="w", pady=(8, 0)
+    row=14, column=0, columnspan=2, sticky="w", pady=(8, 0)
 )
 
 def start():
@@ -156,6 +211,8 @@ def start():
         "1" if fast_var.get() else "0",
         "--auto_draw",
         "1" if draw_var.get() else "0",
+        "--erosion_iters",
+        str(erosion_iters_var.get()),
     ]
     print("Command:", " ".join(cmd))
     try:
@@ -168,7 +225,7 @@ def start():
     root.after(0, root.destroy)
 
 btn_start = ttk.Button(frame, text="Start", command=start)
-btn_start.grid(row=12, column=1, sticky="e", pady=16)
+btn_start.grid(row=15, column=1, sticky="e", pady=16)
 
 validate()
 root.mainloop()
