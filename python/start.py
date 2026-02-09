@@ -104,6 +104,7 @@ class LauncherGUI:
         self.script_dir = Path(__file__).parent
         # launcher.py is already in python/, so python_dir is current directory
         self.python_dir = self.script_dir
+        self.close_on_launch = tk.BooleanVar(value=True)
 
         self.setup_ui()
 
@@ -181,6 +182,12 @@ class LauncherGUI:
         )
         btn_exit.grid(row=7, column=0, columnspan=2, pady=(20, 0))
 
+        ttk.Checkbutton(
+            frame,
+            text="啟動後關閉啟動器 | Close launcher after launch",
+            variable=self.close_on_launch,
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(10, 0))
+
         # Progress bar (hidden)
         self.progress = ttk.Progressbar(
             frame,
@@ -196,7 +203,7 @@ class LauncherGUI:
             foreground="#999",
             justify="center"
         )
-        help_text.grid(row=8, column=0, columnspan=2, pady=(15, 0))
+        help_text.grid(row=9, column=0, columnspan=2, pady=(15, 0))
 
     def update_status(self, message):
         """Update status message"""
@@ -261,12 +268,14 @@ class LauncherGUI:
                     "compare_gui.py": "手動 vs AI 比較 | Manual vs AI Comparison"
                 }
 
-                messagebox.showinfo(
-                    "啟動成功 Launch Successful",
-                    f"{tool_names.get(script_name, 'Tool')} 已啟動！\nhas been launched!"
-                )
-
-                self.update_status("請選擇要啟動的工具 | Please select a tool")
+                if self.close_on_launch.get():
+                    self.root.after(0, self.root.quit)
+                else:
+                    messagebox.showinfo(
+                        "啟動成功 Launch Successful",
+                        f"{tool_names.get(script_name, 'Tool')} 已啟動！\nhas been launched!"
+                    )
+                    self.update_status("請選擇要啟動的工具 | Please select a tool")
 
             except subprocess.CalledProcessError as e:
                 self.hide_progress()
