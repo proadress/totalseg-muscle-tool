@@ -15,7 +15,7 @@ FONT_SIZE = 18
 
 root = tk.Tk()
 root.title("Medical Image Segmentation")
-root.geometry("430x450")
+root.geometry("550x520")
 root.configure(bg=BG)
 
 dicom_var = tk.StringVar()
