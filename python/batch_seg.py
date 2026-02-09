@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime
+import time
+import traceback
 import SimpleITK as sitk
 import json
 
@@ -80,7 +82,19 @@ def find_all_dicom_folders(root_path, max_depth=10):
     return dicom_folders
 
 
-def process_single_dicom(dicom_path, output_base, task, spine, fast, auto_draw, erosion_iters):
+def _safe_name(name):
+    return "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in name)
+
+
+def process_single_dicom(
+    dicom_path,
+    output_base,
+    task,
+    spine,
+    fast,
+    auto_draw,
+    erosion_iters,
+):
     """
     處理單個 DICOM 資料夾
 
@@ -96,29 +110,33 @@ def process_single_dicom(dicom_path, output_base, task, spine, fast, auto_draw, 
     Returns:
         dict: 處理結果 {"success": bool, "message": str}
     """
-    try:
-        cmd = [
-            "uv",
-            "run",
-            "seg.py",
-            "--dicom",
-            str(dicom_path),
-            "--out",
-            str(output_base),
-            "--task",
-            task,
-            "--spine",
-            str(spine),
-            "--fast",
-            str(fast),
-            "--auto_draw",
-            str(auto_draw),
-            "--erosion_iters",
-            str(erosion_iters),
-        ]
+    cmd = [
+        "uv",
+        "run",
+        "seg.py",
+        "--dicom",
+        str(dicom_path),
+        "--out",
+        str(output_base),
+        "--task",
+        task,
+        "--spine",
+        str(spine),
+        "--fast",
+        str(fast),
+        "--auto_draw",
+        str(auto_draw),
+        "--erosion_iters",
+        str(erosion_iters),
+    ]
+    started_at = datetime.now()
+    start_perf = time.perf_counter()
 
+    try:
         print(f"\n{'='*80}")
         print(f"處理中: {dicom_path.name}")
+        print(f"命令: {subprocess.list2cmdline(cmd)}")
+        print(f"輸出目錄: {output_base}")
         print(f"{'='*80}")
 
         result = subprocess.run(
@@ -128,24 +146,46 @@ def process_single_dicom(dicom_path, output_base, task, spine, fast, auto_draw, 
             text=True,
             cwd=Path(__file__).parent,
         )
+        elapsed_sec = time.perf_counter() - start_perf
 
         return {
             "success": True,
             "message": "處理成功",
-            "stdout": result.stdout,
+            "cmd": cmd,
+            "started_at": started_at.isoformat(timespec="seconds"),
+            "finished_at": datetime.now().isoformat(timespec="seconds"),
+            "elapsed_sec": round(elapsed_sec, 2),
+            "returncode": 0,
+            "stdout": result.stdout or "",
+            "stderr": result.stderr or "",
         }
 
     except subprocess.CalledProcessError as e:
+        elapsed_sec = time.perf_counter() - start_perf
         return {
             "success": False,
             "message": f"處理失敗: {e}",
-            "stdout": e.stdout if e.stdout else "",
-            "stderr": e.stderr if e.stderr else "",
+            "cmd": cmd,
+            "started_at": started_at.isoformat(timespec="seconds"),
+            "finished_at": datetime.now().isoformat(timespec="seconds"),
+            "elapsed_sec": round(elapsed_sec, 2),
+            "returncode": e.returncode,
+            "stdout": e.stdout or "",
+            "stderr": e.stderr or "",
         }
     except Exception as e:
+        elapsed_sec = time.perf_counter() - start_perf
         return {
             "success": False,
             "message": f"未預期的錯誤: {e}",
+            "cmd": cmd,
+            "started_at": started_at.isoformat(timespec="seconds"),
+            "finished_at": datetime.now().isoformat(timespec="seconds"),
+            "elapsed_sec": round(elapsed_sec, 2),
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "traceback": traceback.format_exc(),
         }
 
 
@@ -189,9 +229,12 @@ def batch_process(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = root_folder / f"batch_processing_log_{timestamp}.txt"
     results_file = root_folder / f"batch_processing_results_{timestamp}.json"
+    case_logs_dir = root_folder / f"batch_case_logs_{timestamp}"
+    case_logs_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n📝 日誌檔案: {log_file}")
     print(f"📊 結果檔案: {results_file}")
+    print(f"📁 個案詳細日誌: {case_logs_dir}")
     print(f"\n開始批次處理 {len(dicom_folders)} 個資料夾...")
 
     # 處理結果統計
@@ -211,6 +254,7 @@ def batch_process(
         log.write(f"自動產圖: {'是' if auto_draw else '否'}\n")
         log.write(f"侵蝕次數: {erosion_iters}\n")
         log.write(f"找到 {len(dicom_folders)} 個 DICOM 資料夾\n")
+        log.write(f"個案詳細日誌目錄: {case_logs_dir}\n")
         log.write("="*80 + "\n\n")
 
         for i, dicom_path in enumerate(dicom_folders, 1):
@@ -220,33 +264,82 @@ def batch_process(
 
             # 決定輸出路徑
             if output_base:
-                out_dir = Path(output_base)
+                output_root = Path(output_base)
+                try:
+                    # Keep each case isolated when many folders share names like SER00002.
+                    rel_parent = dicom_path.relative_to(root_folder).parent
+                    out_dir = output_root / rel_parent
+                except ValueError:
+                    out_dir = output_root / dicom_path.parent.name
             else:
                 out_dir = dicom_path.parent
+            out_dir.mkdir(parents=True, exist_ok=True)
+            log.write(f"輸出基底目錄: {out_dir}\n")
 
             # 處理單個資料夾
             result = process_single_dicom(
                 dicom_path, out_dir, task, spine, fast, auto_draw, erosion_iters
             )
+            log.write(f"命令: {subprocess.list2cmdline(result.get('cmd', []))}\n")
+            log.write(f"開始時間: {result.get('started_at', 'N/A')}\n")
+            log.write(f"結束時間: {result.get('finished_at', 'N/A')}\n")
+            log.write(f"耗時(秒): {result.get('elapsed_sec', 'N/A')}\n")
+            log.write(f"返回碼: {result.get('returncode', 'N/A')}\n")
+
+            case_log_name = f"{i:03d}_{_safe_name(dicom_path.name)}.log"
+            case_log_path = case_logs_dir / case_log_name
+            with open(case_log_path, "w", encoding="utf-8") as case_log:
+                case_log.write(f"Case: {dicom_path.name}\n")
+                case_log.write(f"DICOM: {dicom_path}\n")
+                case_log.write(f"Output base: {out_dir}\n")
+                case_log.write(
+                    f"Command: {subprocess.list2cmdline(result.get('cmd', []))}\n"
+                )
+                case_log.write(f"Started: {result.get('started_at', 'N/A')}\n")
+                case_log.write(f"Finished: {result.get('finished_at', 'N/A')}\n")
+                case_log.write(f"Elapsed sec: {result.get('elapsed_sec', 'N/A')}\n")
+                case_log.write(f"Return code: {result.get('returncode', 'N/A')}\n")
+                case_log.write("\n[STDOUT]\n")
+                case_log.write(result.get("stdout", "") or "(empty)\n")
+                case_log.write("\n[STDERR]\n")
+                case_log.write(result.get("stderr", "") or "(empty)\n")
+                if result.get("traceback"):
+                    case_log.write("\n[TRACEBACK]\n")
+                    case_log.write(result["traceback"])
 
             # 記錄結果
             if result["success"]:
                 results["success"] += 1
-                print(f"✓ 成功")
+                print(f"✓ 成功 ({result.get('elapsed_sec', 'N/A')}s)")
                 log.write(f"狀態: 成功\n")
             else:
                 results["failed"] += 1
                 print(f"✗ 失敗: {result['message']}")
                 log.write(f"狀態: 失敗\n")
                 log.write(f"錯誤訊息: {result['message']}\n")
-                if "stderr" in result:
-                    log.write(f"錯誤輸出:\n{result['stderr']}\n")
+                stderr_text = (result.get("stderr") or "").strip()
+                stdout_text = (result.get("stdout") or "").strip()
+                if stderr_text:
+                    log.write(
+                        f"錯誤輸出摘要(最後2000字元):\n{stderr_text[-2000:]}\n"
+                    )
+                if stdout_text:
+                    log.write(
+                        f"標準輸出摘要(最後2000字元):\n{stdout_text[-2000:]}\n"
+                    )
+                if result.get("traceback"):
+                    log.write(f"Python Traceback:\n{result['traceback']}\n")
+            log.write(f"個案詳細日誌: {case_log_path}\n")
 
             results["details"].append({
                 "folder": str(dicom_path),
                 "name": dicom_path.name,
                 "success": result["success"],
                 "message": result["message"],
+                "output_base": str(out_dir),
+                "elapsed_sec": result.get("elapsed_sec"),
+                "returncode": result.get("returncode"),
+                "case_log": str(case_log_path),
             })
 
             log.write("-"*80 + "\n\n")

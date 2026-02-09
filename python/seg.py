@@ -8,12 +8,56 @@ import csv
 import os
 import json
 import cv2
+import shutil
+import tempfile
+import time
+from datetime import datetime
 
 VERTEBRAE_LABELS = (
     [f"vertebrae_C{i}" for i in range(1, 8)]
     + [f"vertebrae_T{i}" for i in range(1, 13)]
     + [f"vertebrae_L{i}" for i in range(1, 6)]
 )
+
+
+def log_info(message):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}")
+
+
+def _is_ascii_path(path):
+    return str(path).isascii()
+
+
+def read_image_with_ascii_fallback(image_path):
+    """
+    Read image with a fallback for Windows non-ASCII paths.
+    Some SimpleITK builds fail to open unicode file paths on Windows.
+    """
+    image_path = Path(image_path)
+    try:
+        return sitk.ReadImage(str(image_path))
+    except RuntimeError as first_error:
+        if _is_ascii_path(image_path):
+            log_info(
+                f"[ERROR] Failed to read mask: {image_path} (ASCII path, no fallback)."
+            )
+            raise
+        exists = image_path.exists()
+        size = image_path.stat().st_size if exists else -1
+        log_info(
+            f"[WARN] ReadImage failed on non-ASCII path. "
+            f"path={image_path} exists={exists} size={size} bytes. "
+            "Trying ASCII temp fallback..."
+        )
+        with tempfile.TemporaryDirectory(prefix="sitk_ascii_") as tmp_dir:
+            tmp_path = Path(tmp_dir) / image_path.name
+            shutil.copy2(image_path, tmp_path)
+            try:
+                return sitk.ReadImage(str(tmp_path))
+            except RuntimeError:
+                log_info(f"[ERROR] Fallback read also failed for: {image_path}")
+                raise first_error
 
 
 def calculate_slice_hu_with_erosion(slice_mask, slice_ct, erosion_iters=7):
@@ -80,7 +124,7 @@ def get_mask_area_volume_and_hu(nii_path, ct_arr, spacing, resampler, erosion_it
         slice_std_hu: 每個 slice 的 HU 標準差
         total_pixels: mask 的總像素數
     """
-    mask_img = sitk.ReadImage(str(nii_path))
+    mask_img = read_image_with_ascii_fallback(nii_path)
     mask_arr = sitk.GetArrayFromImage(resampler.Execute(mask_img))
 
     slice_area = (
@@ -246,13 +290,18 @@ def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir, erosion_ite
     - 第二部分（HU）：合併左右，按面積加權平均
     - 第三部分（HU std）：合併左右，按面積加權
     """
-    print("Starting to export slice areas, HU values, and total volumes to CSV...")
+    t0 = time.perf_counter()
+    log_info(
+        "Stage: CSV export started "
+        f"(mask_dir={mask_dir}, output_csv={output_csv}, erosion_iters={erosion_iters})"
+    )
 
     reader = sitk.ImageSeriesReader()
     files = reader.GetGDCMSeriesFileNames(str(dicom_dir))
     if not files:
-        print(f"❌ [ERROR] No DICOM found in: {dicom_dir}")
+        log_info(f"[ERROR] No DICOM found in: {dicom_dir}")
         raise RuntimeError(f"No DICOM found in: {dicom_dir}")
+    log_info(f"DICOM slices discovered: {len(files)} from {dicom_dir}")
 
     reader.SetFileNames(files)
     ct_image = sitk.Cast(reader.Execute(), sitk.sitkInt16)
@@ -265,14 +314,18 @@ def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir, erosion_ite
     resampler.SetTransform(sitk.Transform())
 
     mask_files = [f for f in os.listdir(mask_dir) if f.endswith(".nii.gz")]
+    if not mask_files:
+        raise RuntimeError(f"No mask .nii.gz files found in: {mask_dir}")
+    log_info(f"Masks discovered for CSV export: {len(mask_files)}")
     muscles = [f.replace(".nii.gz", "") for f in mask_files]
 
     area_results = {}
     hu_results = {}
     hu_std_results = {}
 
-    for fname in mask_files:
+    for idx, fname in enumerate(mask_files, 1):
         nii_path = Path(mask_dir) / fname
+        log_info(f"Processing mask [{idx}/{len(mask_files)}]: {nii_path}")
         slice_area, _, slice_mean_hu, slice_std_hu, _ = get_mask_area_volume_and_hu(
             nii_path, ct_arr, spacing, resampler, erosion_iters
         )
@@ -339,8 +392,11 @@ def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir, erosion_ite
         writer.writerow([])
         writer.writerow(["structure", "pixelcount", "volume_cm3"])
 
-        for fname in mask_files:
+        for idx, fname in enumerate(mask_files, 1):
             nii_path = Path(mask_dir) / fname
+            log_info(
+                f"Computing summary volume [{idx}/{len(mask_files)}]: {nii_path.name}"
+            )
             _, volume, _, _, total_pixels = get_mask_area_volume_and_hu(
                 nii_path, ct_arr, spacing, resampler, erosion_iters
             )
@@ -352,7 +408,10 @@ def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir, erosion_ite
                 ]
             )
 
-    print(f"CSV export completed. Output saved to: {output_csv}")
+    log_info(
+        f"Stage: CSV export completed in {time.perf_counter()-t0:.2f}s. "
+        f"Output saved to: {output_csv}"
+    )
 
 
 def merge_statistics_to_csv(mask_dir, output_csv):
@@ -364,11 +423,16 @@ def merge_statistics_to_csv(mask_dir, output_csv):
     - volume_cm3: 相加
     - mean_hu: 按 pixelcount 加權平均
     """
+    t0 = time.perf_counter()
     stats_json_path = Path(mask_dir) / "statistics.json"
+    log_info(
+        "Stage: merge statistics started "
+        f"(mask_dir={mask_dir}, output_csv={output_csv})"
+    )
 
     if not stats_json_path.exists():
-        print(f"⚠ Warning: statistics.json not found at {stats_json_path}")
-        print(
+        log_info(f"[WARN] statistics.json not found at {stats_json_path}")
+        log_info(
             "  Skipping organ-level HU export. Make sure statistics=True in totalsegmentator."
         )
         return
@@ -389,7 +453,7 @@ def merge_statistics_to_csv(mask_dir, output_csv):
             break
 
     if summary_start_idx is None:
-        print("⚠ Warning: Could not find summary table in CSV")
+        log_info("[WARN] Could not find summary table in CSV; skip merge.")
         return
 
     # 讀取原本的 summary 內容
@@ -494,7 +558,10 @@ def merge_statistics_to_csv(mask_dir, output_csv):
                 ]
             )
 
-    print(f"✓ Statistics merged. Bilateral muscles combined. Output: {output_csv}")
+    log_info(
+        f"Stage: merge statistics completed in {time.perf_counter()-t0:.2f}s. "
+        f"Output: {output_csv}"
+    )
 
 
 def run_task(dicom_path, out_dir, task, fast=False, roi_subset=None):
@@ -514,7 +581,16 @@ def run_task(dicom_path, out_dir, task, fast=False, roi_subset=None):
     if roi_subset:
         params["roi_subset"] = roi_subset
 
+    t0 = time.perf_counter()
+    log_info(
+        "Stage: totalsegmentator started "
+        f"(task={task}, fast={fast}, out_dir={out_dir}, roi_subset={'yes' if roi_subset else 'no'})"
+    )
     totalsegmentator(**params)
+    log_info(
+        f"Stage: totalsegmentator completed in {time.perf_counter()-t0:.2f}s "
+        f"(task={task}, out_dir={out_dir})"
+    )
 
 
 def main():
@@ -546,6 +622,7 @@ def main():
     )
 
     args = parser.parse_args()
+    pipeline_t0 = time.perf_counter()
 
     if args.fast:
         print(
@@ -557,12 +634,19 @@ def main():
         Path(args.out) if args.out else dicom_path.parent
     ) / f"{dicom_path.name}_output"
     output_base.mkdir(parents=True, exist_ok=True)
+    log_info(
+        "Pipeline started "
+        f"(dicom={dicom_path}, output_base={output_base}, task={args.task}, "
+        f"spine={args.spine}, fast={args.fast}, auto_draw={args.auto_draw}, "
+        f"erosion_iters={args.erosion_iters})"
+    )
 
     seg_folder_name = f"segmentation_{args.task}" + ("_fast" if args.fast else "")
     seg_output = output_base / seg_folder_name
     seg_output.mkdir(exist_ok=True)
+    log_info(f"Primary segmentation output dir: {seg_output}")
 
-    print(f"Running segmentation task: {args.task}")
+    log_info(f"Running segmentation task: {args.task}")
     run_task(dicom_path, seg_output, args.task, fast=bool(args.fast))
 
     csv_name = f"mask_{args.task}" + ("_fast" if args.fast else "") + ".csv"
@@ -574,10 +658,11 @@ def main():
     merge_statistics_to_csv(seg_output, str(output_csv))
 
     if args.spine and args.task != "total":
-        print("Running spine segmentation task: total")
+        log_info("Running spine segmentation task: total")
         spine_folder_name = "segmentation_spine_fast"
         seg_spine_output = output_base / spine_folder_name
         seg_spine_output.mkdir(exist_ok=True)
+        log_info(f"Spine segmentation output dir: {seg_spine_output}")
 
         run_task(
             dicom_path,
@@ -599,7 +684,8 @@ def main():
         merge_statistics_to_csv(seg_spine_output, str(output_spine_csv))
 
     if args.auto_draw:
-        print("Segmentation completed. Running draw script automatically...")
+        draw_t0 = time.perf_counter()
+        log_info("Stage: auto_draw started")
         subprocess.run(
             [
                 "uv",
@@ -620,6 +706,9 @@ def main():
             ],
             check=True,
         )
+        log_info(f"Stage: auto_draw completed in {time.perf_counter()-draw_t0:.2f}s")
+
+    log_info(f"Pipeline completed in {time.perf_counter()-pipeline_t0:.2f}s")
 
 
 if __name__ == "__main__":
