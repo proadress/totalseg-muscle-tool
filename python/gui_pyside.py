@@ -55,8 +55,8 @@ class TotalSegApp(QMainWindow):
         self.setWindowTitle("Medical Image Segmentation (PySide6)")
         self.resize(800, 750)
 
-        # Apply dark theme by default
-        qdarktheme.setup_theme("dark")
+        # Apply light theme by default
+        qdarktheme.setup_theme("light")
 
         # Central Widget & Main Layout
         self.central_widget = QWidget()
@@ -111,7 +111,7 @@ class TotalSegApp(QMainWindow):
 
         # State Variables
         self.spacing_xy = None
-        self.current_theme = "dark"
+        self.current_theme = "light"
 
     def setup_single_tab(self):
         layout = QVBoxLayout(self.tab_single)
