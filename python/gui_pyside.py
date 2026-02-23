@@ -21,6 +21,12 @@ except ImportError:
     sitk = None
 
 
+# Get the directory where the current script or EXE is located
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys.executable).parent
+else:
+    BASE_DIR = Path(__file__).parent
+
 class TotalSegApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -76,6 +82,7 @@ class TotalSegApp(QMainWindow):
 
         # QProcess for running background tasks safely
         self.process = QProcess(self)
+        self.process.setWorkingDirectory(str(BASE_DIR))
         self.process.readyReadStandardOutput.connect(self.handle_stdout)
         self.process.readyReadStandardError.connect(self.handle_stderr)
         self.process.finished.connect(self.process_finished)
