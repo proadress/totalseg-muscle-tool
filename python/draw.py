@@ -334,7 +334,7 @@ def main():
 
     # === Debug output ===
     print("\n" + "=" * 60)
-    print("🔍 [DEBUG] Path Resolution")
+    print("[DEBUG] Path Resolution")
     print("=" * 60)
     print(f"  DICOM input:       {dicom_path}")
     print(f"  Output base:       {output_base}")
