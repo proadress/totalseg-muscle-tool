@@ -6,14 +6,12 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QTabWidget, QLabel, QPushButton, QComboBox, QCheckBox, 
+    QLabel, QPushButton, QComboBox, QCheckBox, QFrame,
     QLineEdit, QFileDialog, QPlainTextEdit, QGroupBox, QFormLayout,
-    QTableWidget, QTableWidgetItem, QHeaderView
+    QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QStackedWidget
 )
-from PySide6.QtCore import Qt, QProcess, QTimer
-from PySide6.QtGui import QFont, QTextCursor
-
-import qdarktheme
+from PySide6.QtCore import Qt, QProcess, QTimer, QSize
+from PySide6.QtGui import QFont, QTextCursor, QIcon, QColor
 
 # Try importing SimpleITK for erosion calculation
 try:
@@ -21,374 +19,640 @@ try:
 except ImportError:
     sitk = None
 
-
 # Determine if running as a bundled PyInstaller EXE
 import platform
 IS_BUNDLED = getattr(sys, 'frozen', False)
 
 if IS_BUNDLED:
-    # 這是使用者放 EXE 的那個真實資料夾 (例如桌面)
     EXE_DIR = Path(sys.executable).parent
-    # 我們在旁邊悄悄建一個後端資料夾
     BASE_DIR = EXE_DIR / "TotalSeg_Backend"
-    
-    # 這是 PyInstaller 肚子裡解壓縮出來的純淨原始檔案
     MEIPASS_DIR = Path(sys._MEIPASS)
-    
-    # 確保後端資料夾存在
     BASE_DIR.mkdir(parents=True, exist_ok=True)
     
-    # 應該要解壓縮的配方檔
-    required_files = ["pyproject.toml", "uv.lock", "seg.py"]
+    required_files = ["pyproject.toml", "uv.lock", "seg.py", "draw.py"]
     for f in required_files:
         src = MEIPASS_DIR / f
         dst = BASE_DIR / f
-        # 只要肚子裡有，就覆蓋過去旁邊的資料夾 (達成無腦升級)
         if src.exists():
             shutil.copy2(src, dst)
 else:
-    # 這是你在 Mac/開發環境下跑的目錄
     BASE_DIR = Path(__file__).parent
+
+# Modern QSS Style for a premium look
+MODERN_STYLE = """
+QMainWindow {
+    background-color: #ffffff;
+}
+QWidget {
+    font-size: 13px;
+    color: #333;
+}
+QGroupBox {
+    font-weight: bold;
+    border: 1px solid #e9ecef;
+    border-radius: 10px;
+    margin-top: 15px;
+    background-color: #fcfcfc;
+    padding-top: 25px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 15px;
+    padding: 0 8px;
+    color: #495057;
+}
+QPushButton {
+    background-color: #ffffff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-weight: 500;
+}
+QPushButton:hover {
+    background-color: #f8f9fa;
+    border-color: #adb5bd;
+}
+QPushButton:pressed {
+    background-color: #e9ecef;
+}
+QPushButton#primary_btn {
+    background-color: #0d6efd;
+    color: white;
+    border: none;
+    font-weight: bold;
+}
+QPushButton#primary_btn:hover {
+    background-color: #0b5ed7;
+}
+QPushButton#primary_btn:disabled {
+    background-color: #e9ecef;
+    color: #adb5bd;
+}
+
+/* Header Switcher Buttons */
+QPushButton#mode_btn {
+    border: none;
+    background-color: transparent;
+    border-radius: 0px;
+    border-bottom: 3px solid transparent;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: bold;
+    color: #6c757d;
+}
+QPushButton#mode_btn:hover {
+    color: #0d6efd;
+}
+QPushButton#mode_btn[active="true"] {
+    color: #0d6efd;
+    border-bottom: 3px solid #0d6efd;
+}
+
+QTableWidget {
+    background-color: #ffffff;
+    border: 1px solid #e9ecef;
+    border-radius: 10px;
+    gridline-color: #f8f9fa;
+}
+/* Fix for Black Bar Selection */
+QTableWidget::item:selected {
+    background-color: #e7f1ff;
+    color: #0d6efd;
+}
+QTableWidget::item {
+    padding: 8px;
+    color: #333333;
+}
+QHeaderView::section {
+    background-color: #f8f9fa;
+    padding: 8px;
+    border: none;
+    border-bottom: 2px solid #e9ecef;
+    font-weight: bold;
+    color: #495057;
+}
+QProgressBar {
+    border: none;
+    background-color: #f1f3f5;
+    height: 8px;
+    border-radius: 4px;
+    text-align: center;
+}
+QProgressBar::chunk {
+    background-color: #0d6efd;
+    border-radius: 4px;
+}
+QPlainTextEdit {
+    background-color: #fafbfc;
+    color: #444;
+    border: 1px solid #e9ecef;
+    border-radius: 10px;
+    padding: 12px;
+}
+QLineEdit {
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 8px;
+    background-color: white;
+}
+"""
 
 class TotalSegApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Medical Image Segmentation (PySide6)")
-        self.resize(800, 750)
+        self.setWindowTitle("TotalSegmentator AI 影像管理系統 v1.0.0")
+        self.resize(1150, 850)
+        self.setStyleSheet(MODERN_STYLE)
 
-        # Apply light theme by default
-        qdarktheme.setup_theme("light")
+        # State Variables
+        self.spacing_xy = None
+        self.batch_queue = []
+        self.current_batch_index = -1
+        self.is_running = False
+        
+        self.compare_manual_mask = ""
+
+        # 智慧解決方案引擎 (Solution Engine)
+        self.solutions = {
+            "CUDA out of memory": "【建議解決方案】顯卡記憶體不足。請開啟「快速推論模式」或關閉其他佔用顯卡的程式。",
+            "No Series can be found": "【建議解決方案】找不到影像。請確認資料夾內包含標準 DICOM 檔案，或嘗試掃描更深層的目錄。",
+            "UnicodeEncodeError": "【建議解決方案】檔案路徑包含特殊字元。請將資料夾移動至僅包含英文與數字的路徑。",
+            "Permission denied": "【建議解決方案】存取被拒。請檢查資料夾權限，或暫時關閉可能攔截程式的防毒軟體。",
+            "torch_shm_manager": "【macOS 專用修復】偵測到 PyTorch 權限問題。系統已嘗試自動修復，請再次按下「啟動 AI 自動分割任務」。",
+            "mach port for IMKCFRunLoopWakeUpReliable": "【系統提示】這是 macOS 的輸入法相容性警告，不影響程式執行，請放心使用。",
+            "ModuleNotFoundError": "【技術提示】環境組件遺失。請重新執行 `uv sync` 以確保所有依賴項已正確安裝。"
+        }
 
         # Central Widget & Main Layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        self.main_layout = QVBoxLayout(self.central_widget)
-        self.main_layout.setContentsMargins(20, 20, 20, 20)
-        self.main_layout.setSpacing(15)
+        self.main_v_layout = QVBoxLayout(self.central_widget)
+        self.main_v_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_v_layout.setSpacing(0)
 
-        # Header Area
-        header_layout = QHBoxLayout()
-        title_label = QLabel("Medical Image Segmentation Tool")
-        title_label.setStyleSheet("font-size: 24px; font-weight: bold;")
+        # --- Top Navigation Bar ---
+        self.nav_bar = QFrame()
+        self.nav_bar.setStyleSheet("background-color: white; border-bottom: 1px solid #e9ecef;")
+        self.nav_bar.setFixedHeight(65)
+        nav_layout = QHBoxLayout(self.nav_bar)
+        nav_layout.setContentsMargins(30, 0, 30, 0)
+
+        brand_lbl = QLabel("TotalSeg AI")
+        brand_lbl.setStyleSheet("font-size: 20px; font-weight: bold; color: #0d6efd; margin-right: 30px;")
+        nav_layout.addWidget(brand_lbl)
+
+        # Mode Selector Buttons
+        self.btn_mode_seg = QPushButton("🧠  AI 自動分割 (Segmentation)")
+        self.btn_mode_seg.setObjectName("mode_btn")
+        self.btn_mode_seg.setProperty("active", True)
+        self.btn_mode_seg.clicked.connect(lambda: self.switch_mode("seg"))
+        nav_layout.addWidget(self.btn_mode_seg)
+
+        self.btn_mode_compare = QPushButton("⚖️  影像對比分析 (Manual Compare)")
+        self.btn_mode_compare.setObjectName("mode_btn")
+        self.btn_mode_compare.setProperty("active", False)
+        self.btn_mode_compare.clicked.connect(lambda: self.switch_mode("compare"))
+        nav_layout.addWidget(self.btn_mode_compare)
+
+        nav_layout.addStretch()
         
-        header_layout.addWidget(title_label)
-        header_layout.addStretch()
-        self.main_layout.addLayout(header_layout)
-
-        # Tabs
-        self.tabs = QTabWidget()
-        self.main_layout.addWidget(self.tabs)
-
-        # 1. Single Segmentation Tab
-        self.tab_single = QWidget()
-        self.setup_single_tab()
-        self.tabs.addTab(self.tab_single, "Single Segmentation")
-
-        # 2. Batch Segmentation Tab
-        self.tab_batch = QWidget()
-        self.setup_batch_tab()
-        self.tabs.addTab(self.tab_batch, "Batch Segmentation")
-
-        # 3. Compare Tab (Placeholder)
-        self.tab_compare = QWidget()
-        self.tabs.addTab(self.tab_compare, "Manual vs AI Compare")
+        # Detected Device Label
+        self.device_lbl = QLabel("後端推論引擎準備中...")
+        self.device_lbl.setStyleSheet("color: #6c757d; font-size: 11px;")
+        nav_layout.addWidget(self.device_lbl)
         
-        # Log Area (Global for all tabs)
+        self.main_v_layout.addWidget(self.nav_bar)
+
+        # --- Content Area (Stacked) ---
+        self.content_stack = QStackedWidget()
+        self.main_v_layout.addWidget(self.content_stack)
+
+        # PAGE 1: Segmentation
+        self.page_seg = QWidget()
+        self.setup_seg_page()
+        self.content_stack.addWidget(self.page_seg)
+
+        # PAGE 2: Comparison
+        self.page_compare = QWidget()
+        self.setup_compare_page()
+        self.content_stack.addWidget(self.page_compare)
+
+        # --- Bottom Log Area ---
+        self.log_container = QWidget()
+        self.log_container.setStyleSheet("background-color: white; padding: 10px 30px 30px 30px;")
+        log_layout = QVBoxLayout(self.log_container)
+        
         self.log_area = QPlainTextEdit()
         self.log_area.setReadOnly(True)
-        self.log_area.setFont(QFont("Consolas", 10))
-        self.log_area.setMinimumHeight(200)
-        self.main_layout.addWidget(self.log_area)
+        self.log_area.setFont(QFont("Monaco", 9)) if sys.platform == "darwin" else self.log_area.setFont(QFont("Consolas", 9))
+        self.log_area.setMaximumHeight(150)
+        self.log_area.setPlaceholderText("系統執行日誌將顯示於此...")
+        log_layout.addWidget(self.log_area)
+        
+        self.main_v_layout.addWidget(self.log_container)
 
-        # QProcess for running background tasks safely
+        # QProcess
         self.process = QProcess(self)
         self.process.setWorkingDirectory(str(BASE_DIR))
         self.process.readyReadStandardOutput.connect(self.handle_stdout)
         self.process.readyReadStandardError.connect(self.handle_stderr)
         self.process.finished.connect(self.process_finished)
 
-        # State Variables
-        self.spacing_xy = None
+    def switch_mode(self, mode):
+        if mode == "seg":
+            self.content_stack.setCurrentIndex(0)
+            self.btn_mode_seg.setProperty("active", True)
+            self.btn_mode_compare.setProperty("active", False)
+        else:
+            self.content_stack.setCurrentIndex(1)
+            self.btn_mode_seg.setProperty("active", False)
+            self.btn_mode_compare.setProperty("active", True)
         
-        # Batch Mode Variables
-        self.is_batch_mode = False
-        self.batch_queue = []
-        self.current_batch_index = -1
+        # Refresh styles
+        self.btn_mode_seg.style().unpolish(self.btn_mode_seg)
+        self.btn_mode_seg.style().polish(self.btn_mode_seg)
+        self.btn_mode_compare.style().unpolish(self.btn_mode_compare)
+        self.btn_mode_compare.style().polish(self.btn_mode_compare)
 
-    def setup_single_tab(self):
-        layout = QVBoxLayout(self.tab_single)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(15)
+    def setup_seg_page(self):
+        layout = QHBoxLayout(self.page_seg)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(30)
 
-        # Directories Group
-        dir_group = QGroupBox("Directories")
-        dir_layout = QFormLayout(dir_group)
+        # Left Column: Config
+        left_col = QFrame()
+        left_col.setFixedWidth(350)
+        left_layout = QVBoxLayout(left_col)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(15)
+
+        # 📂 Input Selection
+        io_group = QGroupBox("1. 影像資料來源")
+        io_layout = QVBoxLayout(io_group)
         
-        # DICOM Row
-        dicom_layout = QHBoxLayout()
-        self.dicom_btn = QPushButton("Select DICOM Folder")
-        self.dicom_btn.clicked.connect(self.select_dicom)
-        self.dicom_label = QLineEdit()
-        self.dicom_label.setPlaceholderText("No folder selected")
-        self.dicom_label.textChanged.connect(self.validate_inputs)
-        dicom_layout.addWidget(self.dicom_btn)
-        dicom_layout.addWidget(self.dicom_label)
-        dir_layout.addRow(dicom_layout)
+        self.btn_select_src = QPushButton("📂  選擇 DICOM 資料夾")
+        self.btn_select_src.setMinimumHeight(48)
+        self.btn_select_src.clicked.connect(self.select_source)
+        io_layout.addWidget(self.btn_select_src)
 
-        # Output Row
-        out_layout = QHBoxLayout()
-        self.out_btn = QPushButton("Select Output Folder")
-        self.out_btn.clicked.connect(self.select_output)
-        self.out_label = QLineEdit()
-        self.out_label.setPlaceholderText("No folder selected")
-        self.out_label.textChanged.connect(self.validate_inputs)
-        out_layout.addWidget(self.out_btn)
-        out_layout.addWidget(self.out_label)
-        dir_layout.addRow(out_layout)
+        self.src_label = QLabel("尚未選擇來源路徑")
+        self.src_label.setStyleSheet("color: #6c757d; font-size: 11px;")
+        self.src_label.setWordWrap(True)
+        io_layout.addWidget(self.src_label)
         
-        layout.addWidget(dir_group)
+        left_layout.addWidget(io_group)
 
-        # Configuration Group
-        cfg_group = QGroupBox("Configuration")
+        # ⚙️ AI Settings
+        cfg_group = QGroupBox("2. AI 分割參數設定")
         cfg_layout = QVBoxLayout(cfg_group)
-
-        # Task Selection
-        task_layout = QHBoxLayout()
-        task_layout.addWidget(QLabel("Segmentation Task:"))
+        
+        grid_layout = QFormLayout()
+        grid_layout.setSpacing(10)
+        
+        self.modality_combo = QComboBox()
+        self.modality_combo.addItems(["CT", "MRI"])
+        grid_layout.addRow("影像類別:", self.modality_combo)
+        
         self.task_combo = QComboBox()
-        tasks = [
-            "abdominal_muscles", "aortic_sinuses", "appendicular_bones", "body", 
-            "brain_structures", "breasts", "coronary_arteries", "face", 
-            "head_glands_cavities", "head_muscles", "headneck_bones_vessels", 
-            "heartchambers_highres", "liver_segments", "lung_nodules", 
-            "lung_vessels", "oculomotor_muscles", "pleural_pericard_effusion",
-            "thigh_shoulder_muscles", "tissue_types", "ventricle_parts", 
-            "vertebrae_body", "total"
-        ]
-        self.task_combo.addItems(tasks)
-        self.task_combo.setCurrentText("abdominal_muscles")
-        task_layout.addWidget(self.task_combo)
-        task_layout.addStretch()
-        cfg_layout.addLayout(task_layout)
+        self.task_combo.addItems([
+            "abdominal_muscles", "body", "spine", "thigh_shoulder_muscles", "total"
+        ])
+        grid_layout.addRow("分割任務:", self.task_combo)
+        
+        cfg_layout.addLayout(grid_layout)
 
-        # Checkboxes
-        self.chk_spine = QCheckBox("Spine segmentation (takes more time)")
+        self.chk_spine = QCheckBox("標註脊椎層級 (需較長時間)")
         self.chk_spine.setChecked(True)
-        self.chk_fast = QCheckBox("Fast mode (may reduce accuracy)")
-        self.chk_draw = QCheckBox("Export PNG overlays")
+        self.chk_fast = QCheckBox("快速推論模式 (低解析度)")
+        self.chk_draw = QCheckBox("自動產生影像疊加圖 (PNG)")
         self.chk_draw.setChecked(True)
         
         cfg_layout.addWidget(self.chk_spine)
         cfg_layout.addWidget(self.chk_fast)
         cfg_layout.addWidget(self.chk_draw)
 
-        # Erosion
-        erosion_layout = QHBoxLayout()
-        erosion_layout.addWidget(QLabel("Erosion iterations (HU):"))
+        erosion_box = QHBoxLayout()
+        erosion_box.addWidget(QLabel("肌肉收縮迭代 (Erosion):"))
         self.erosion_input = QLineEdit("7")
-        self.erosion_input.setFixedWidth(50)
+        self.erosion_input.setFixedWidth(40)
         self.erosion_input.textChanged.connect(self.calc_erosion)
-        self.erosion_mm_label = QLabel("Approx erosion: N/A")
-        self.erosion_mm_label.setStyleSheet("color: gray;")
+        erosion_box.addWidget(self.erosion_input)
+        cfg_layout.addLayout(erosion_box)
         
-        erosion_layout.addWidget(self.erosion_input)
-        erosion_layout.addWidget(self.erosion_mm_label)
-        erosion_layout.addStretch()
-        cfg_layout.addLayout(erosion_layout)
-        
-        layout.addWidget(cfg_group)
+        self.erosion_mm_label = QLabel("預估邊緣收縮: N/A")
+        self.erosion_mm_label.setStyleSheet("color: #198754; font-size: 11px;")
+        cfg_layout.addWidget(self.erosion_mm_label)
 
-        # Start Button Layout
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        self.btn_start = QPushButton("Start Segmentation")
-        self.btn_start.setMinimumSize(200, 45)
-        self.btn_start.setEnabled(False)
-        self.btn_start.setStyleSheet("font-weight: bold;")
-        self.btn_start.clicked.connect(self.start_process)
-        btn_layout.addWidget(self.btn_start)
-        
-        layout.addLayout(btn_layout)
-        layout.addStretch()
+        # Slice Range Selection
+        range_box = QGroupBox("切片範圍計算 (選填)")
+        range_box.setCheckable(True)
+        range_box.setChecked(False)
+        range_layout = QHBoxLayout(range_box)
+        range_layout.addWidget(QLabel("從"))
+        self.slice_start_input = QLineEdit("1")
+        self.slice_start_input.setFixedWidth(40)
+        range_layout.addWidget(self.slice_start_input)
+        range_layout.addWidget(QLabel("至"))
+        self.slice_end_input = QLineEdit("")
+        self.slice_end_input.setPlaceholderText("末")
+        self.slice_end_input.setFixedWidth(40)
+        range_layout.addWidget(self.slice_end_input)
+        range_layout.addWidget(QLabel("張"))
+        cfg_layout.addWidget(range_box)
+        self.range_box_widget = range_box
 
-    def setup_batch_tab(self):
-        layout = QVBoxLayout(self.tab_batch)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(15)
-
-        # Config Panel (Top)
-        config_layout = QHBoxLayout()
+        left_layout.addWidget(cfg_group)
         
-        # Directories Group
-        dir_group = QGroupBox("Batch Directories")
-        dir_layout = QFormLayout(dir_group)
+        # Output Group (Optional/Hidden)
+        self.out_group = QGroupBox("3. 輸出路徑設定 (選填)")
+        self.out_group.setCheckable(True)
+        self.out_group.setChecked(False)
+        out_layout = QVBoxLayout(self.out_group)
+        self.btn_select_out = QPushButton("📁  修改輸出存放目錄")
+        self.btn_select_out.clicked.connect(self.select_output)
+        out_layout.addWidget(self.btn_select_out)
+        self.out_label = QLabel("預設：於來源路徑旁產生 _output 檔案夾")
+        self.out_label.setStyleSheet("font-size: 10px; color: #666;")
+        out_layout.addWidget(self.out_label)
+        left_layout.addWidget(self.out_group)
         
-        # Root DICOM Row
-        dicom_layout = QHBoxLayout()
-        self.batch_dicom_btn = QPushButton("Select Root DICOM Folder")
-        self.batch_dicom_btn.clicked.connect(self.select_batch_dicom)
-        self.batch_dicom_label = QLineEdit()
-        self.batch_dicom_label.setPlaceholderText("Select folder containing multiple patients")
-        self.batch_dicom_label.setReadOnly(True)
-        dicom_layout.addWidget(self.batch_dicom_btn)
-        dicom_layout.addWidget(self.batch_dicom_label)
-        dir_layout.addRow(dicom_layout)
+        left_layout.addStretch()
+        layout.addWidget(left_col)
 
-        # Output Root Row
-        out_layout = QHBoxLayout()
-        self.batch_out_btn = QPushButton("Select Output Root")
-        self.batch_out_btn.clicked.connect(self.select_batch_output)
-        self.batch_out_label = QLineEdit()
-        self.batch_out_label.setPlaceholderText("Output folder for all results")
-        out_layout.addWidget(self.batch_out_btn)
-        out_layout.addWidget(self.batch_out_label)
-        dir_layout.addRow(out_layout)
+        # Right Column: Queue
+        right_col = QFrame()
+        right_layout = QVBoxLayout(right_col)
+        right_layout.setContentsMargins(0, 0, 0, 0)
         
-        config_layout.addWidget(dir_group)
-
-        # Inherit settings visually (just labels referring to Single Tab settings for MVP)
-        settings_group = QGroupBox("Shared Configuration")
-        settings_layout = QVBoxLayout(settings_group)
-        settings_layout.addWidget(QLabel("[!] Batch mode uses the Task, Spine, Fast,"))
-        settings_layout.addWidget(QLabel("and Erosion settings from the 'Single' tab."))
-        settings_layout.addStretch()
-        config_layout.addWidget(settings_group)
-        
-        layout.addLayout(config_layout)
-
-        # Queue List Area (Middle)
-        self.batch_table = QTableWidget(0, 3)
-        self.batch_table.setHorizontalHeaderLabels(["Include", "Patient Folder Path", "Status"])
-        header = self.batch_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        # Task Table
+        self.task_table = QTableWidget(0, 3)
+        self.task_table.setHorizontalHeaderLabels(["", "病患 / 影像路徑", "處理狀態"])
+        header = self.task_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        self.task_table.setColumnWidth(0, 40)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        layout.addWidget(self.batch_table)
-
-        # Start Button Layout
-        btn_layout = QHBoxLayout()
-        self.batch_progress_label = QLabel("0 / 0 Completed")
-        self.batch_progress_label.setStyleSheet("font-weight: bold; color: gray;")
-        btn_layout.addWidget(self.batch_progress_label)
-        btn_layout.addStretch()
-        self.btn_batch_start = QPushButton("Start Batch Processing")
-        self.btn_batch_start.setMinimumSize(200, 45)
-        self.btn_batch_start.setEnabled(False)
-        self.btn_batch_start.setStyleSheet("font-weight: bold;")
-        self.btn_batch_start.clicked.connect(self.start_batch_process)
-        btn_layout.addWidget(self.btn_batch_start)
         
-        layout.addLayout(btn_layout)
+        # Table Styling
+        self.task_table.setShowGrid(False)
+        self.task_table.setAlternatingRowColors(True)
+        self.task_table.setStyleSheet("alternate-background-color: #fafbfc; selection-background-color: #e7f1ff;")
+        self.task_table.verticalHeader().setVisible(False)
+        
+        right_layout.addWidget(self.task_table)
 
-    def select_dicom(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select DICOM Directory")
-        if folder:
-            self.dicom_label.setText(folder)
-            parent_dir = str(Path(folder).parent)
-            self.out_label.setText(parent_dir)
+        # Progress
+        self.prog_bar_lbl = QLabel("待處理任務清單")
+        right_layout.addWidget(self.prog_bar_lbl)
+        self.pbar = QProgressBar()
+        right_layout.addWidget(self.pbar)
+
+        self.btn_start = QPushButton("🚀  啟動 AI 自動分割任務")
+        self.btn_start.setObjectName("primary_btn")
+        self.btn_start.setMinimumHeight(65)
+        self.btn_start.setEnabled(False)
+        self.btn_start.clicked.connect(self.start_unified_process)
+        right_layout.addWidget(self.btn_start)
+
+        layout.addWidget(right_col)
+
+    def setup_compare_page(self):
+        layout = QVBoxLayout(self.page_compare)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+
+        header_lbl = QLabel("⚖️ 人工標註 vs AI 自動分割對比分析")
+        header_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #495057;")
+        layout.addWidget(header_lbl)
+        
+        desc_lbl = QLabel("請選取 NIfTI (.nii.gz) 或 NRRD (.nrrd) 檔案，系統將計算 Dice 系數與體積差異。")
+        desc_lbl.setStyleSheet("color: #6c757d;")
+        layout.addWidget(desc_lbl)
+        
+        comp_group = QGroupBox("分析檔案選取")
+        comp_layout = QFormLayout(comp_group)
+        comp_layout.setSpacing(15)
+        
+        # AI Mask Path
+        self.ai_mask_path_lbl = QLabel("尚未選取檔案")
+        self.ai_mask_path_lbl.setWordWrap(True)
+        btn_ai = QPushButton("🔍 選取 AI 分割結果 (NII/NRRD)")
+        btn_ai.clicked.connect(self.select_compare_ai)
+        comp_layout.addRow(btn_ai, self.ai_mask_path_lbl)
+        
+        # Manual Mask Path
+        self.manual_mask_path_lbl = QLabel("尚未選取檔案")
+        self.manual_mask_path_lbl.setWordWrap(True)
+        btn_manual = QPushButton("🔍 選取人工標註結果 (NII/NRRD)")
+        btn_manual.clicked.connect(self.select_compare_manual)
+        comp_layout.addRow(btn_manual, self.manual_mask_path_lbl)
+        
+        layout.addWidget(comp_group)
+
+        # Action
+        self.btn_run_compare = QPushButton("📊 開始執行比對分析")
+        self.btn_run_compare.setObjectName("primary_btn")
+        self.btn_run_compare.setMinimumHeight(55)
+        self.btn_run_compare.setEnabled(False)
+        self.btn_run_compare.clicked.connect(self.run_compare_analysis)
+        layout.addWidget(self.btn_run_compare)
+        
+        layout.addStretch()
+
+    # --- Comparison Methods ---
+    def select_compare_ai(self):
+        path, _ = QFileDialog.getOpenFileName(self, "選取 AI 分割結果 (NII/NRRD)", "", "Medical Images (*.nii *.nii.gz *.nrrd)")
+        if path:
+            self.compare_ai_mask = path
+            self.ai_mask_path_lbl.setText(path)
+            self.check_compare_ready()
+
+    def select_compare_manual(self):
+        path, _ = QFileDialog.getOpenFileName(self, "選取人工標註結果 (NII/NRRD)", "", "Medical Images (*.nii *.nii.gz *.nrrd)")
+        if path:
+            self.compare_manual_mask = path
+            self.manual_mask_path_lbl.setText(path)
+            self.check_compare_ready()
+
+    def check_compare_ready(self):
+        self.btn_run_compare.setEnabled(bool(self.compare_ai_mask and self.compare_manual_mask))
+
+    def run_compare_analysis(self):
+        self.log_area.clear()
+        self.append_log("系統：開始執行對比分析...\n")
+        self.btn_run_compare.setEnabled(False)
+        
+        try:
+            if not sitk:
+                raise ImportError("尚未安裝 SimpleITK。")
+
+            ai_img = sitk.ReadImage(self.compare_ai_mask)
+            manual_img = sitk.ReadImage(self.compare_manual_mask)
             
-            # Extract spacing if SimpleITK is available
-            if sitk:
-                try:
-                    reader = sitk.ImageSeriesReader()
-                    files = reader.GetGDCMSeriesFileNames(folder)
-                    if files:
-                        img = sitk.ReadImage(files[0])
-                        spacing = img.GetSpacing()
-                        self.spacing_xy = (spacing[0], spacing[1])
-                except Exception:
-                    self.spacing_xy = None
-            self.calc_erosion()
+            ai_arr = sitk.GetArrayFromImage(ai_img)
+            manual_arr = sitk.GetArrayFromImage(manual_img)
+            spacing = manual_img.GetSpacing()
+            
+            # Find the slice annotated by the doctor
+            slice_idx = -1
+            for i in range(manual_arr.shape[0]):
+                if np.any(manual_arr[i] > 0):
+                    slice_idx = i
+                    break
+                    
+            if slice_idx == -1:
+                self.append_log("❌ [錯誤] 無法在「人工標註結果」中找到任何標註 (皆為 0)。\n")
+                return
+
+            import numpy as np
+            ai_slice = ai_arr[slice_idx] > 0
+            manual_slice = manual_arr[slice_idx] > 0
+            
+            # Dice
+            intersection = np.logical_and(ai_slice, manual_slice).sum()
+            total = ai_slice.sum() + manual_slice.sum()
+            dice = (2.0 * intersection / total) if total > 0 else 0.0
+            
+            # Area
+            pixel_cm2 = (spacing[0] * spacing[1]) / 100.0
+            ai_area = float(ai_slice.sum() * pixel_cm2)
+            manual_area = float(manual_slice.sum() * pixel_cm2)
+            
+            self.append_log(f"✅ [成功] 找到標註層級：第 {slice_idx + 1} 層\n")
+            self.append_log("-" * 40 + "\n")
+            self.append_log(f"🧠 AI 分割面積： {ai_area:.2f} cm²\n")
+            self.append_log(f"👨‍⚕️ 人工標註面積： {manual_area:.2f} cm²\n")
+            self.append_log(f"🎯 Dice 重合度： {dice:.4f} (滿分 1.0)\n")
+            self.append_log("-" * 40 + "\n")
+            
+            # HTML 樣式高亮
+            if dice >= 0.9:
+                self.append_log("<span style='color: #198754; font-weight: bold;'>評估：極致吻合 (Dice ≥ 0.9)</span><br>", is_html=True)
+            elif dice >= 0.8:
+                self.append_log("<span style='color: #0d6efd; font-weight: bold;'>評估：高度吻合 (Dice ≥ 0.8)</span><br>", is_html=True)
+            else:
+                self.append_log("<span style='color: #dc3545; font-weight: bold;'>評估：吻合度偏低，建議人工檢視</span><br>", is_html=True)
+                
+        except Exception as e:
+            self.append_log(f"❌ [錯誤] 比對失敗：{str(e)}\n")
+        finally:
+            self.btn_run_compare.setEnabled(True)
+
+    # --- Logic ---
+
+    def select_source(self):
+        path = QFileDialog.getExistingDirectory(self, "請選取 DICOM 資料夾或病患根目錄")
+        if path:
+            self.src_label.setText(path)
+            parent_dir = Path(path).parent
+            self.out_label.setText(str(parent_dir / (Path(path).name + "_output")))
+            self.scan_directory(path)
 
     def select_output(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        folder = QFileDialog.getExistingDirectory(self, "請選取輸出資料存放根目錄")
         if folder:
             self.out_label.setText(folder)
 
-    def select_batch_dicom(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Root DICOM Directory")
-        if folder:
-            self.batch_dicom_label.setText(folder)
-            parent_dir = str(Path(folder).parent)
-            self.batch_out_label.setText(parent_dir + "_batch_output")
-            self.scan_batch_directory(folder)
+    def has_dicom_files(self, folder):
+        """檢查資料夾內是否有疑似 DICOM 的檔案 (包含無副檔名或 .dcm)"""
+        # 1. 優先檢查是否有名顯的 .dcm 結尾
+        if list(folder.glob("*.dcm")):
+            return True
+        # 2. 如果沒有 .dcm，檢查是否有無副檔名的非隱藏檔案 (常見於醫療系統匯出)
+        # 我們只看前 3 個檔案來加快掃描速度
+        files = [f for f in folder.iterdir() if f.is_file() and not f.name.startswith(".")]
+        if files:
+            # 測試第一個檔案是否能被 ITK 識別 (如果有安裝)
+            if sitk:
+                try:
+                    reader = sitk.ImageFileReader()
+                    reader.SetFileName(str(files[0]))
+                    reader.ReadImageInformation()
+                    return True
+                except:
+                    pass
+        return False
 
-    def select_batch_output(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Batch Output Directory")
-        if folder:
-            self.batch_out_label.setText(folder)
-            
-    def scan_batch_directory(self, root_path):
-        self.batch_table.setRowCount(0)
+    def scan_directory(self, root_path):
+        self.task_table.setRowCount(0)
         root = Path(root_path)
         valid_folders = []
         
-        self.append_log(f"Scanning {root_path} for DICOM folders...\n")
-        
-        # Fast scan: looking for folders containing .dcm files
-        for sub_dir in root.rglob("*"):
-            if sub_dir.is_dir():
-                # Check if it contains at least one .dcm file directly
-                if any(sub_dir.glob("*.dcm")):
-                    valid_folders.append(sub_dir)
+        # 1. 檢查是否直接為 DICOM 目錄
+        if self.has_dicom_files(root):
+            valid_folders.append(root)
+        else:
+            # 2. 遞迴搜尋子目錄 (最多往內找 4 層，確保效能)
+            for sub_dir in root.rglob("*"):
+                if sub_dir.is_dir():
+                    # 避免掃描太深或掃描到輸出資料夾
+                    if "_output" in sub_dir.name or "TotalSeg_Backend" in sub_dir.name:
+                        continue
+                    if self.has_dicom_files(sub_dir):
+                        valid_folders.append(sub_dir)
 
         if not valid_folders:
-            self.append_log("[WARNING] No DICOM folders found in the selected root.\n")
-            self.btn_batch_start.setEnabled(False)
+            self.append_log("[警示] 未在所選路徑偵測到 DICOM 影像檔。\n")
+            self.btn_start.setEnabled(False)
             return
 
-        self.append_log(f"Found {len(valid_folders)} patient folders.\n")
-        self.batch_table.setRowCount(len(valid_folders))
-        
+        self.task_table.setRowCount(len(valid_folders))
         for i, folder in enumerate(valid_folders):
             chk = QCheckBox()
             chk.setChecked(True)
-            chk.stateChanged.connect(self.update_batch_start_button)
-            
-            # Center the checkbox
             chk_widget = QWidget()
             chk_layout = QHBoxLayout(chk_widget)
             chk_layout.addWidget(chk)
             chk_layout.setAlignment(Qt.AlignCenter)
             chk_layout.setContentsMargins(0, 0, 0, 0)
+            self.task_table.setCellWidget(i, 0, chk_widget)
+            chk.stateChanged.connect(self.update_ui_state)
             
-            self.batch_table.setCellWidget(i, 0, chk_widget)
-            
-            # Store relative path for cleaner UI, but absolute path in data
-            rel_path = str(folder.relative_to(root))
-            path_item = QTableWidgetItem(rel_path)
-            path_item.setData(Qt.UserRole, str(folder))
-            self.batch_table.setItem(i, 1, path_item)
-            
-            status_item = QTableWidgetItem("Pending")
-            self.batch_table.setItem(i, 2, status_item)
-            
-        self.update_batch_start_button()
-
-    def update_batch_start_button(self):
-        checked_count = 0
-        for i in range(self.batch_table.rowCount()):
-            chk_widget = self.batch_table.cellWidget(i, 0)
-            chk = chk_widget.layout().itemAt(0).widget()
-            if chk.isChecked():
-                checked_count += 1
+            try:
+                display_name = str(folder.relative_to(root)) if folder != root else folder.name
+            except ValueError:
+                display_name = str(folder)
                 
-        if checked_count > 0 and self.batch_out_label.text().strip():
-            self.btn_batch_start.setEnabled(True)
-            self.btn_batch_start.setStyleSheet("background-color: #0d6efd; color: white; font-weight: bold;")
-            self.batch_progress_label.setText(f"0 / {checked_count} Completed")
-        else:
-            self.btn_batch_start.setEnabled(False)
-            self.btn_batch_start.setStyleSheet("font-weight: bold;")
-            self.batch_progress_label.setText("0 / 0 Completed")
+            path_item = QTableWidgetItem(display_name)
+            path_item.setData(Qt.UserRole, str(folder))
+            self.task_table.setItem(i, 1, path_item)
+            
+            status_item = QTableWidgetItem("待處理 (Ready)")
+            self.task_table.setItem(i, 2, status_item)
+            
+        self.update_ui_state()
 
-    def validate_inputs(self):
-        if self.dicom_label.text().strip() and self.out_label.text().strip():
-            self.btn_start.setEnabled(True)
-            self.btn_start.setStyleSheet("background-color: #0d6efd; color: white; font-weight: bold;")
-        else:
-            self.btn_start.setEnabled(False)
-            self.btn_start.setStyleSheet("font-weight: bold;")
+        # 精進 Spacing 偵測邏輯，解決 ITK 無法識別單一檔案導致 N/A 的問題
+        if sitk:
+            try:
+                reader = sitk.ImageSeriesReader()
+                # 使用 SeriesReader 抓取 DICOM 系列檔案通常比 ReadImage(單檔) 更穩定
+                dicom_names = reader.GetGDCMSeriesFileNames(str(valid_folders[0]))
+                if dicom_names:
+                    # 讀取系列中的第一張圖來獲取中繼資料
+                    first_img = sitk.ReadImage(dicom_names[0])
+                    spacing = first_img.GetSpacing()
+                    self.spacing_xy = (spacing[0], spacing[1])
+                    self.append_log(f"[系統] 成功識別影像解析度: {spacing[0]:.2f} x {spacing[1]:.2f} mm\n")
+                else:
+                    self.spacing_xy = None
+            except Exception as e:
+                self.spacing_xy = None
+                # 不在 Log 顯示冗長的錯誤，保持介面簡潔
+        self.calc_erosion()
+
+    def update_ui_state(self):
+        checked_count = 0
+        for i in range(self.task_table.rowCount()):
+            chk_widget = self.task_table.cellWidget(i, 0)
+            if chk_widget.layout().itemAt(0).widget().isChecked():
+                checked_count += 1
+        
+        self.btn_start.setEnabled(checked_count > 0)
+        self.prog_bar_lbl.setText(f"目前項目中共有 {checked_count} 個待處理任務")
+        self.pbar.setMaximum(checked_count if checked_count > 0 else 1)
+        self.pbar.setValue(0)
 
     def calc_erosion(self):
         text = self.erosion_input.text()
@@ -397,207 +661,186 @@ class TotalSegApp(QMainWindow):
             if self.spacing_xy and iters >= 0:
                 avg_spacing = (self.spacing_xy[0] + self.spacing_xy[1]) / 2.0
                 approx_mm = iters * avg_spacing
-                self.erosion_mm_label.setText(f"Approx erosion: {approx_mm:.2f} mm")
-                self.erosion_mm_label.setStyleSheet("color: #198754;")
+                self.erosion_mm_label.setText(f"預估邊緣收縮: {approx_mm:.2f} mm")
             else:
-                self.erosion_mm_label.setText("Approx erosion: N/A")
-                self.erosion_mm_label.setStyleSheet("color: gray;")
+                self.erosion_mm_label.setText("預估邊緣收縮: N/A")
         except ValueError:
-            self.erosion_mm_label.setText("Invalid iterations")
-            self.erosion_mm_label.setStyleSheet("color: #dc3545;")
+            self.erosion_mm_label.setText("迭代數值錯誤")
 
-    def append_log(self, text):
+    def append_log(self, text, is_html=False):
         self.log_area.moveCursor(QTextCursor.End)
-        self.log_area.insertPlainText(text)
+        if is_html:
+            self.log_area.appendHtml(text)
+        else:
+            self.log_area.insertPlainText(text)
         self.log_area.moveCursor(QTextCursor.End)
 
-    def check_uv_installed(self):
-        return shutil.which("uv") is not None
-
-    def start_process(self):
+    def start_unified_process(self):
         self.log_area.clear()
+        self.is_running = True
         self.btn_start.setEnabled(False)
-        self.btn_start.setText("Installing / Syncing Environment...")
-        self.dicom_btn.setEnabled(False)
-        self.out_btn.setEnabled(False)
-
-        # Note: In a production app, the uv installation itself could also be run via QProcess 
-        # to not block the main UI thread. For simplicity, we create a QTimer to simulate async.
-        QTimer.singleShot(100, self.run_setup_and_segmentation)
-
-    def start_batch_process(self):
-        self.log_area.clear()
-        self.btn_batch_start.setEnabled(False)
-        self.btn_batch_start.setText("Running Batch...")
-        self.batch_dicom_btn.setEnabled(False)
-        self.batch_out_btn.setEnabled(False)
+        self.btn_start.setText("⏳ 初始化 AI 環境中...")
         
-        self.is_batch_mode = True
         self.batch_queue = []
-        
-        # Build Queue
-        for i in range(self.batch_table.rowCount()):
-            chk_widget = self.batch_table.cellWidget(i, 0)
-            chk = chk_widget.layout().itemAt(0).widget()
-            if chk.isChecked():
-                dicom_path = self.batch_table.item(i, 1).data(Qt.UserRole)
-                out_name = Path(dicom_path).name
-                out_path = str(Path(self.batch_out_label.text()) / out_name)
+        for i in range(self.task_table.rowCount()):
+            chk_widget = self.task_table.cellWidget(i, 0)
+            if chk_widget.layout().itemAt(0).widget().isChecked():
+                dicom_path = self.task_table.item(i, 1).data(Qt.UserRole)
+                out_root = self.out_label.text()
+                
+                # 自動路徑解析
+                if "預設" in out_root or not out_root:
+                    out_root = str(Path(dicom_path).parent / (Path(dicom_path).name + "_output"))
+                
+                out_path = out_root
+                if self.task_table.rowCount() > 1:
+                    out_path = str(Path(out_root) / Path(dicom_path).name)
+
                 self.batch_queue.append((i, dicom_path, out_path))
                 
         self.current_batch_index = -1
-        
         QTimer.singleShot(100, self.run_setup_and_segmentation)
 
     def run_setup_and_segmentation(self):
         try:
-            # 1. Install uv if missing (blocking call here since it's just a small curl/powershell)
-            if not self.check_uv_installed():
-                self.append_log("[SYSTEM] Installing 'uv' package manager...\n")
-                if os.name == 'nt':
-                    cmd = 'powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"'
-                else:
-                    cmd = 'curl -LsSf https://astral.sh/uv/install.sh | sh'
-                
-                res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                self.append_log(res.stdout)
-                
-                if res.returncode != 0:
-                    self.append_log("[ERROR] Failed to install uv.\n" + res.stderr)
-                    self.reset_ui()
-                    return
-
-                # Add to PATH
+            if shutil.which("uv") is None:
+                self.append_log("[系統] 正在安裝『uv』環境管理工具...\n")
+                cmd = 'powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"' if os.name == 'nt' else 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+                subprocess.run(cmd, shell=True, capture_output=True)
                 uv_path = os.path.expanduser("~\\.cargo\\bin") if os.name == 'nt' else os.path.expanduser("~/.cargo/bin")
                 os.environ["PATH"] += os.pathsep + uv_path
-                self.append_log("[SUCCESS] 'uv' installed.\n")
 
-            # 2. Sync Environment via QProcess
-            self.append_log("Syncing AI environment dependencies...\n")
-            
-            # We chain the QProcess commands: first sync, then seg
-            self.process.start("uv", ["sync"])
+            self.append_log("同步 AI 引擎環境中...\n")
             self.process_state = "sync"
-
+            self.process.start("uv", ["sync"])
         except Exception as e:
-            self.append_log(f"[EXCEPTION] {str(e)}\n")
-            if self.is_batch_mode:
-                self.reset_batch_ui()
-            else:
-                self.reset_ui()
+            self.append_log(f"[異常中斷] {str(e)}\n")
+            self.reset_ui()
 
     def handle_stdout(self):
-        data = self.process.readAllStandardOutput()
-        stdout = bytes(data).decode("utf8")
-        self.append_log(stdout)
+        self.append_log(bytes(self.process.readAllStandardOutput()).decode("utf8"))
 
     def handle_stderr(self):
-        data = self.process.readAllStandardError()
-        stderr = bytes(data).decode("utf8")
-        self.append_log(stderr)
+        self.append_log(bytes(self.process.readAllStandardError()).decode("utf8"))
+
+    def fix_macos_torch_perms(self):
+        """自動修復 macOS 上 torch_shm_manager 的執行權限"""
+        try:
+            # 尋找 venv 中的 torch bin 目錄
+            torch_bin = BASE_DIR / ".venv" / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages" / "torch" / "bin" / "torch_shm_manager"
+            if torch_bin.exists():
+                subprocess.run(["chmod", "+x", str(torch_bin)], check=True)
+                self.append_log(f"[系統] 已自動修復 macOS PyTorch 核心執行權限。\n")
+        except Exception as e:
+            self.append_log(f"[警告] 自動修復權限失敗: {str(e)}\n")
+
+    def diagnose_error(self, log_text):
+        """掃描 Log 內容並提供白話解決建議"""
+        suggestions = []
+        for key, advice in self.solutions.items():
+            if key in log_text:
+                suggestions.append(advice)
+        
+        if suggestions:
+            self.append_log("\n" + "─"*30)
+            self.append_log("\n🕵️ <span style='font-size: 14px; font-weight: bold;'>智慧診斷報告：</span>\n", is_html=True)
+            for s in suggestions:
+                # 使用 HTML 呈現黃色強調背景
+                self.append_log(f"<div style='background-color: #fff3cd; color: #856404; padding: 5px; border-radius: 5px;'>{s}</div><br>", is_html=True)
+            self.append_log("─"*30 + "\n")
 
     def process_finished(self):
         if self.process_state == "sync":
             if self.process.exitCode() == 0:
-                self.append_log("\n[SUCCESS] Environment synced. Starting AI Inference...\n")
-                if self.is_batch_mode:
-                    self.run_next_batch_task()
-                else:
-                    self.execute_segmentation()
-            else:
-                self.append_log("\n[ERROR] Dependency sync failed.\n")
-                if self.is_batch_mode:
-                    self.reset_batch_ui()
-                else:
-                    self.reset_ui()
-        elif self.process_state == "seg":
-            if self.process.exitCode() == 0:
-                self.append_log("\n[SUCCESS] Segmentation Completed!\n")
-                if self.is_batch_mode and self.current_batch_index >= 0:
-                    row = self.batch_queue[self.current_batch_index][0]
-                    self.batch_table.item(row, 2).setText("Success")
-            else:
-                self.append_log(f"\n[ERROR] Segmentation Process exited with code {self.process.exitCode()}.\n")
-                if self.is_batch_mode and self.current_batch_index >= 0:
-                    row = self.batch_queue[self.current_batch_index][0]
-                    self.batch_table.item(row, 2).setText("Failed")
-                    
-            if self.is_batch_mode:
+                # macOS 特殊處理：修復 torch_shm_manager 權限
+                if sys.platform == "darwin":
+                    self.fix_macos_torch_perms()
                 self.run_next_batch_task()
             else:
                 self.reset_ui()
+        elif self.process_state == "seg":
+            if self.current_batch_index >= 0:
+                row = self.batch_queue[self.current_batch_index][0]
+                if self.process.exitCode() == 0:
+                    status = "處理完成"
+                    self.task_table.item(row, 2).setText(status)
+                    self.task_table.item(row, 2).setForeground(QColor("#198754"))
+                else:
+                    status = "處理失敗"
+                    self.task_table.item(row, 2).setText(status)
+                    self.task_table.item(row, 2).setForeground(QColor("#dc3545"))
+                    self.diagnose_error(self.log_area.toPlainText())
+            
+            # 如果是最後一個任務，則重置 UI
+            if self.current_batch_index >= len(self.batch_queue) - 1:
+                self.reset_ui()
+            
+            self.run_next_batch_task()
 
     def run_next_batch_task(self):
         self.current_batch_index += 1
-        
         if self.current_batch_index < len(self.batch_queue):
             row, dicom_path, out_path = self.batch_queue[self.current_batch_index]
-            self.batch_table.item(row, 2).setText("Running")
-            self.batch_progress_label.setText(f"{self.current_batch_index} / {len(self.batch_queue)} Completed")
-            self.execute_segmentation(dicom_path=dicom_path, out_path=out_path)
-        else:
-            self.append_log("\n[SUCCESS] All batch tasks completed!\n")
-            self.batch_progress_label.setText(f"{len(self.batch_queue)} / {len(self.batch_queue)} Completed")
-            self.reset_batch_ui()
-
-    def execute_segmentation(self, dicom_path=None, out_path=None):
-        if not dicom_path:
-            dicom_path = self.dicom_label.text()
-        if not out_path:
-            out_path = self.out_label.text()
+            self.task_table.item(row, 2).setText("執行分割中...")
+            self.task_table.item(row, 2).setForeground(QColor("#0d6efd"))
+            self.prog_bar_lbl.setText(f"目前進度：第 {self.current_batch_index + 1} / {len(self.batch_queue)} 個任務")
+            self.pbar.setValue(self.current_batch_index)
             
-        if not self.is_batch_mode:
-            self.btn_start.setText("Running Inference...")
-        
-        target_script = "seg.py"
-        
-        # 檢查是否有 mock_seg.py (用於開發與初次測試)
-        if (BASE_DIR / "mock_seg.py").exists():
-            target_script = "mock_seg.py"
+            target_script = "seg.py"
 
-        cmd_args = [
-            "run", target_script,
-            "--dicom", dicom_path,
-            "--out", out_path,
-            "--task", self.task_combo.currentText(),
-            "--spine", "1" if self.chk_spine.isChecked() else "0",
-            "--fast", "1" if self.chk_fast.isChecked() else "0",
-            "--auto_draw", "1" if self.chk_draw.isChecked() else "0",
-            "--erosion_iters", self.erosion_input.text()
-        ]
-        
-        self.append_log(f"\n> uv {' '.join(cmd_args)}\n\n")
-        self.process_state = "seg"
-        self.process.start("uv", cmd_args)
+            cmd_args = [
+                "run", target_script,
+                "--dicom", dicom_path,
+                "--out", out_path,
+                "--task", self.task_combo.currentText(),
+                "--modality", self.modality_combo.currentText(),
+                "--spine", "1" if self.chk_spine.isChecked() else "0",
+                "--fast", "1" if self.chk_fast.isChecked() else "0",
+                "--auto_draw", "1" if self.chk_draw.isChecked() else "0",
+                "--erosion_iters", self.erosion_input.text()
+            ]
+
+            # 1. 切片範圍防呆 (Slice Range Guard)
+            if self.range_box_widget.isChecked():
+                start_str = self.slice_start_input.text()
+                end_str = self.slice_end_input.text()
+                
+                if not start_str.isdigit() or (end_str and not end_str.isdigit()):
+                    QMessageBox.warning(self, "輸入錯誤", "切片範圍必須為數字！")
+                    return
+
+                start_val = int(start_str)
+                if end_str:
+                    end_val = int(end_str)
+                    if start_val > end_val:
+                        QMessageBox.warning(self, "邏輯錯誤", "起始層級不能大於結束層級！")
+                        return
+
+                if start_str:
+                    cmd_args.extend(["--slice_start", start_str])
+                if end_str:
+                    cmd_args.extend(["--slice_end", end_str])
+
+            self.process_state = "seg"
+            self.process.start("uv", cmd_args)
+        else:
+            self.append_log("\n[完成] 所有自動分割任務已處理完畢。\n")
+            self.pbar.setValue(len(self.batch_queue))
+            self.reset_ui()
 
     def reset_ui(self):
-        self.is_batch_mode = False
-        self.btn_start.setText("Start Segmentation")
+        self.is_running = False
+        self.btn_start.setText("🚀  啟動 AI 自動分割任務")
         self.btn_start.setEnabled(True)
-        self.dicom_btn.setEnabled(True)
-        self.out_btn.setEnabled(True)
-        
-    def reset_batch_ui(self):
-        self.is_batch_mode = False
-        self.btn_batch_start.setText("Start Batch Processing")
-        self.batch_dicom_btn.setEnabled(True)
-        self.batch_out_btn.setEnabled(True)
-        self.update_batch_start_button()
+        self.btn_select_src.setEnabled(True)
 
     def closeEvent(self, event):
-        # Kill the QProcess cleanly
         if self.process.state() == QProcess.Running:
             self.process.kill()
-            self.process.waitForFinished()
         event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
-    # Set global font for a modern look
-    font = QFont("Segoe UI", 10)
-    app.setFont(font)
-    
     window = TotalSegApp()
     window.show()
     sys.exit(app.exec())

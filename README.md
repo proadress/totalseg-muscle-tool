@@ -1,4 +1,4 @@
-# Medical Image Segmentation Tool (segmentation_v0.8)
+# TotalSeg Muscle Tool (v1.0.0)
 
 [English](#english) | [中文](#中文)
 
@@ -10,29 +10,17 @@ A medical image segmentation tool based on TotalSegmentator for CT image muscle 
 
 ### Features
 
-#### **Tool 1: AI Muscle Segmentation (Single File)**
-- Read DICOM folder (CT series)
-- Execute TotalSegmentator task to generate segmentation masks (`*.nii.gz`)
-- Export CSV: area per slice (cm²), average HU per slice, overall statistics
-- Optional: Spine (C/T/L) segmentation and output
-- Optional: PNG overlays for each slice
-
-#### **Tool 2: Batch AI Muscle Segmentation**
-- Automatically scan and process multiple DICOM folders
-- Recursive folder search (configurable depth)
-- Fault tolerance: Skip failed cases and continue
-- Detailed logs and statistics
-
-#### **Tool 3: Manual vs AI Comparison**
-- Compare AI segmentation with manual annotations
-- Calculate Dice coefficient (similarity)
-- Calculate area differences
-- Optional CSV export
+#### **Tool 1: Unified AI Analysis (Unified UI)**
+- **MRI & CT Support**: Select modality to automatically use `total_mr` or standard CT models.
+- **Partial Volume Calculation**: Specify a slice range (e.g., Slices 10-50) for targeted volumetric analysis.
+- **Smart Detection**: Recursive scanning of nested folders and identification of extension-less DICOMs.
+- **Solution Engine**: Professional error diagnosis that translates technical logs into medical-friendly advice.
+- **Manual vs AI Comparison**: Integrated DICE coefficient and volume difference analysis.
 
 ### Quick Start
 
 #### **Windows**
-Double-click `TotalSeg_Launcher.exe` to launch. Background dependencies will be installed automatically on the first run.
+Double-click `TotalSeg_Launcher.exe` (Windows) or double-click the bundled App (Mac) to launch. Background dependencies will be auto-managed on first run.
 
 #### **Mac/Linux**
 ```bash
@@ -92,25 +80,24 @@ slice_number, manual_area_cm2, ai_area_cm2, dice_score
 ```bash
 cd python
 
-# Single file segmentation
-uv run seg.py --dicom ../SER00005 --task tissue_4_types --spine 0 --fast 0 --auto_draw 1 --erosion_iters 7
+# Unified segmentation with new modality and range support
+uv run seg.py --dicom ../SER00005 --task total --modality MRI --slice_start 10 --slice_end 50 --auto_draw 1
 
-# Batch processing
-uv run batch_seg.py --root "path/to/root/folder" --task tissue_4_types
-
-# Draw overlays only (without re-running segmentation)
-uv run draw.py --dicom ../SER00005 --task tissue_4_types --fast 0 --spine 1 --erosion_iters 7
+# Manual vs AI comparison
+uv run gui_pyside.py  # Switch to Comparison tab in unified UI
 ```
 
 ### Key Parameters
 
 - `--dicom`: DICOM folder path
-- `--out`: Output root directory (default: DICOM folder's parent)
+- `--out`: Output root directory
 - `--task`: TotalSegmentator task
-- `--fast 1`: Fast mode (faster but may reduce accuracy)
+- `--modality`: CT or MRI
+- `--slice_start` / `--slice_end`: Range for volume calculation
+- `--fast 1`: Fast mode
 - `--spine 1`: Additional spine segmentation
-- `--auto_draw 1`: Auto-generate PNG overlays after segmentation
-- `--erosion_iters`: Erosion iterations for HU calculation (default: 7)
+- `--auto_draw 1`: Auto-generate PNG overlays
+- `--erosion_iters`: Erosion iterations (default: 7)
 
 ### Calculation Logic
 
@@ -126,7 +113,7 @@ uv run draw.py --dicom ../SER00005 --task tissue_4_types --fast 0 --spine 1 --er
 ```
 totalseg-muscle-tool/
 totalseg-muscle-tool/
-├── TotalSeg_Launcher_Windows.exe # Windows standalone executable
+├── TotalSeg_Launcher.exe   # Windows standalone launcher
 └── python/
     ├── gui_pyside.py     # Unified PySide6 GUI (Single/Batch/Compare)
     ├── seg.py            # Segmentation core
@@ -180,29 +167,17 @@ This project is open source for research and educational purposes.
 
 ### 功能特色
 
-#### **工具 1：AI 肌肉分割（單檔處理）**
-- 讀取 DICOM 資料夾（CT series）
-- 執行 TotalSegmentator 任務產生分割遮罩（`*.nii.gz`）
-- 匯出 CSV：每層面積（cm²）、每層平均 HU、整體統計
-- 可選：脊椎（C/T/L）分割與輸出
-- 可選：每層 PNG 疊圖
-
-#### **工具 2：批次 AI 肌肉分割**
-- 自動掃描並處理多個 DICOM 資料夾
-- 遞迴資料夾搜尋（可調整深度）
-- 容錯機制：失敗案例自動跳過並繼續
-- 詳細日誌與統計
-
-#### **工具 3：手動 vs AI 比較**
-- 比較 AI 分割與手動標註
-- 計算 Dice 係數（相似度）
-- 計算面積差異
-- 可選擇性匯出 CSV
+#### **功能 1：統一 AI 分析介面 (Unified UI)**
+- **MRI & CT 雙模態支援**：切換影像類別自動調用 `total_mr` 或 CT 專屬模型。
+- **特定切片範圍計算**：可指定張數範圍（如第 20 到 40 張）進行精確的局部體積統計。
+- **強健掃描邏輯**：自動識別深層嵌套目錄與無副檔名的 DICOM 檔案。
+- **智慧診斷引擎**：發生報錯時自動提供白話文「解決建議」，不需閱讀代碼。
+- **手動 vs AI 比較**：整合 DICE 系數與體積差異分析。
 
 ### 快速開始
 
 #### **Windows**
-雙擊執行 `TotalSeg_Launcher_Windows.exe`。首次執行會自動在背景建立隔絕環境並安裝依賴套件。
+雙擊執行 `TotalSeg_Launcher.exe` (Windows) 或執行打包好的 App (Mac)。首次執行會自動完成環境配置。
 
 #### **Mac/Linux**
 ```bash
@@ -262,14 +237,11 @@ slice_number, manual_area_cm2, ai_area_cm2, dice_score
 ```bash
 cd python
 
-# 單檔分割
-uv run seg.py --dicom ../SER00005 --task tissue_4_types --spine 0 --fast 0 --auto_draw 1 --erosion_iters 7
+# 單檔/批次分割
+uv run seg.py --dicom ../SER00005 --task total --modality MRI --slice_start 10 --slice_end 50 --auto_draw 1
 
-# 批次處理
-uv run batch_seg.py --root "路徑/到/根目錄" --task tissue_4_types
-
-# 只畫疊圖（不重跑分割）
-uv run draw.py --dicom ../SER00005 --task tissue_4_types --fast 0 --spine 1 --erosion_iters 7
+# 手動 vs AI 比較
+uv run gui_pyside.py  # 在統一介面中切換至「比較分析」分頁
 ```
 
 ### 主要參數

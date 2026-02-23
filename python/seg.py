@@ -107,25 +107,35 @@ def calculate_slice_hu_with_erosion(slice_mask, slice_ct, erosion_iters=7):
         return 0.0, 0.0
 
 
-def get_mask_area_volume_and_hu(nii_path, ct_arr, spacing, resampler, erosion_iters=7):
+def get_mask_area_volume_and_hu(
+    nii_path, ct_arr, spacing, resampler, erosion_iters=7, slice_start=None, slice_end=None
+):
     """
-    計算每個 slice 的面積、總體積、以及每個 slice 的平均 HU
+    計算每個 slice 的面積、總體積、以及每個 slice 的平均 HU (受切片範圍過濾)
 
     Args:
         nii_path: mask 的路徑
-        ct_arr: 原始 CT 影像的 numpy array（已經包含 HU 值）
+        ct_arr: 原始 CT 影像的 numpy array
         spacing: CT 影像的 spacing
         resampler: 重採樣器
-
-    Returns:
-        slice_area: 每個 slice 的面積 (cm²)
-        total_volume: 總體積 (cm³)
-        slice_mean_hu: 每個 slice 的平均 HU
-        slice_std_hu: 每個 slice 的 HU 標準差
-        total_pixels: mask 的總像素數
+        slice_start: 起始切片 (1-indexed, None 為 0)
+        slice_end: 結束切片 (1-indexed, None 為最後)
     """
     mask_img = read_image_with_ascii_fallback(nii_path)
     mask_arr = sitk.GetArrayFromImage(resampler.Execute(mask_img))
+
+    # 應用切片範圍過濾 (Slice Range Filtering)
+    original_shape = mask_arr.shape[0]
+    # 轉換為 0-indexed 並進行範圍限制
+    start = max(0, int(slice_start) - 1) if slice_start else 0
+    end = min(original_shape, int(slice_end)) if slice_end else original_shape
+
+    # 建立過濾後的 Mask (範圍外設為 0)
+    filtered_mask = np.zeros_like(mask_arr)
+    if start < end:
+        filtered_mask[start:end, :, :] = mask_arr[start:end, :, :]
+    
+    mask_arr = filtered_mask
 
     slice_area = (
         np.sum(mask_arr > 0, axis=(1, 2)) * spacing[0] * spacing[1] / 100
@@ -281,7 +291,9 @@ def merge_bilateral_std_data(area_results, hu_results, std_results):
     return merged_std, list(merged_std.keys())
 
 
-def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir, erosion_iters=7):
+def export_areas_and_volumes_to_csv(
+    mask_dir, output_csv, dicom_dir, erosion_iters=7, slice_start=None, slice_end=None
+):
     """
     # 修改：
     - 第一部分（面積）：保持左右分開
@@ -325,7 +337,7 @@ def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir, erosion_ite
         nii_path = Path(mask_dir) / fname
         log_info(f"Processing mask [{idx}/{len(mask_files)}]: {nii_path}")
         slice_area, _, slice_mean_hu, slice_std_hu, _ = get_mask_area_volume_and_hu(
-            nii_path, ct_arr, spacing, resampler, erosion_iters
+            nii_path, ct_arr, spacing, resampler, erosion_iters, slice_start, slice_end
         )
 
         muscle_name = fname.replace(".nii.gz", "")
@@ -396,7 +408,7 @@ def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir, erosion_ite
                 f"Computing summary volume [{idx}/{len(mask_files)}]: {nii_path.name}"
             )
             _, volume, _, _, total_pixels = get_mask_area_volume_and_hu(
-                nii_path, ct_arr, spacing, resampler, erosion_iters
+                nii_path, ct_arr, spacing, resampler, erosion_iters, slice_start, slice_end
             )
             writer.writerow(
                 [
@@ -618,6 +630,9 @@ def main():
         default=7,
         help="Erosion iterations for HU calculation (default: 7)",
     )
+    parser.add_argument("--modality", type=str, default="CT", help="Imaging modality (CT or MRI)")
+    parser.add_argument("--slice_start", type=int, default=None, help="Start slice (1-indexed)")
+    parser.add_argument("--slice_end", type=int, default=None, help="End slice (1-indexed)")
 
     args = parser.parse_args()
     pipeline_t0 = time.perf_counter()
@@ -636,7 +651,8 @@ def main():
         "Pipeline started "
         f"(dicom={dicom_path}, output_base={output_base}, task={args.task}, "
         f"spine={args.spine}, fast={args.fast}, auto_draw={args.auto_draw}, "
-        f"erosion_iters={args.erosion_iters})"
+        f"erosion_iters={args.erosion_iters}, modality={args.modality}, "
+        f"range={args.slice_start}-{args.slice_end})"
     )
 
     seg_folder_name = f"segmentation_{args.task}" + ("_fast" if args.fast else "")
@@ -644,14 +660,27 @@ def main():
     seg_output.mkdir(exist_ok=True)
     log_info(f"Primary segmentation output dir: {seg_output}")
 
-    log_info(f"Running segmentation task: {args.task}")
-    run_task(dicom_path, seg_output, args.task, fast=bool(args.fast))
+    log_info(f"Running segmentation task: {args.task} (Modality: {args.modality})")
+    task_to_run = args.task
+    if args.modality.upper() == "MRI":
+        if args.task == "total":
+            task_to_run = "total_mr"
+        elif args.task == "spine":
+            task_to_run = "vertebrae_mr"
+        # Others might not have MR equivalents yet, default to task name
+        
+    run_task(dicom_path, seg_output, task_to_run, fast=bool(args.fast))
 
     csv_name = f"mask_{args.task}" + ("_fast" if args.fast else "") + ".csv"
     output_csv = output_base / csv_name
 
     export_areas_and_volumes_to_csv(
-        seg_output, str(output_csv), dicom_path, erosion_iters=args.erosion_iters
+        seg_output,
+        str(output_csv),
+        dicom_path,
+        erosion_iters=args.erosion_iters,
+        slice_start=args.slice_start,
+        slice_end=args.slice_end,
     )
     merge_statistics_to_csv(seg_output, str(output_csv))
 
@@ -678,6 +707,8 @@ def main():
             str(output_spine_csv),
             dicom_path,
             erosion_iters=args.erosion_iters,
+            slice_start=args.slice_start,
+            slice_end=args.slice_end,
         )
         merge_statistics_to_csv(seg_spine_output, str(output_spine_csv))
 
@@ -701,6 +732,10 @@ def main():
                 str(args.fast),
                 "--erosion_iters",
                 str(args.erosion_iters),
+                "--slice_start",
+                str(args.slice_start) if args.slice_start else "",
+                "--slice_end",
+                str(args.slice_end) if args.slice_end else "",
             ],
             check=True,
         )

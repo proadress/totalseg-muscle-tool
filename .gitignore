@@ -23,8 +23,10 @@ python/.uv/
 **/png/
 **/segmentation_*/
 **/mask_*.csv
+batch_processing_log_*.txt
+batch_processing_results_*.json
 
-# Medical data / patient data
+# Medical data / patient data (Exclude all common formats)
 SER*/
 **/SER*/
 *.dcm
@@ -32,6 +34,11 @@ SER*/
 *.nii.gz
 *.nrrd
 *.seg.nrrd
+mock_*/
+2.(41928147)_CHEST CT/
 
-# Local configs
+# Local configs & Zips
 .env
+/NEW
+*.zip
+*.tar.gz

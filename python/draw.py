@@ -179,15 +179,9 @@ def erode_mask_slice(mask_slice, erosion_iters):
     return eroded.astype(bool)
 
 
-def dicom_to_overlay_png(
-    dicom_dir: Path,
-    out_dir: Path,
-    masks_dir: Path = None,
-    show_spine=True,
-    task_name=None,
-    fast=False,
-    erosion_iters=0,
     eroded_out_dir: Path = None,
+    slice_start=None,
+    slice_end=None,
 ):
     validate_path_ascii(dicom_dir)
     validate_path_ascii(out_dir)
@@ -220,7 +214,16 @@ def dicom_to_overlay_png(
     output_count = 0
     eroded_output_count = 0
 
+    # Slice range logic
+    total_slices = len(files)
+    start = max(0, int(slice_start) - 1) if slice_start else 0
+    end = min(total_slices, int(slice_end)) if slice_end else total_slices
+
     for idx, dicom_file in enumerate(files):
+        # Skip if outside range
+        if idx < start or idx >= end:
+            continue
+            
         try:
             slice_arr = arr[idx]
             minv, maxv = wc - ww / 2, wc + ww / 2
@@ -315,6 +318,8 @@ def main():
         default=7,
         help="Erosion iterations for eroded PNG output (default: 7)",
     )
+    parser.add_argument("--slice_start", type=int, default=None, help="Start slice (1-indexed)")
+    parser.add_argument("--slice_end", type=int, default=None, help="End slice (1-indexed)")
 
     args = parser.parse_args()
 
@@ -370,6 +375,8 @@ def main():
             fast=bool(args.fast),
             erosion_iters=args.erosion_iters,
             eroded_out_dir=png_eroded_folder,
+            slice_start=args.slice_start,
+            slice_end=args.slice_end,
         )
     except Exception as ex:
         print(f"\n❌ [FATAL ERROR] Unexpected error during drawing:")

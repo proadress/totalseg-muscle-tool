@@ -41,7 +41,7 @@ jobs:
           --add-data "pyproject.toml;." `
           --add-data "uv.lock;." `
           --add-data "seg.py;." `
-          --add-data "mock_seg.py;." `
+          --add-data "draw.py;." `
           --hidden-import=PySide6.QtCore `
           --hidden-import=PySide6.QtGui `
           --hidden-import=PySide6.QtWidgets `
