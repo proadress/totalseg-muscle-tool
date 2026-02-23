@@ -18,8 +18,9 @@ jobs:
         python-version: '3.10'
         
     - name: Install uv
-      run: curl -LsSf https://astral.sh/uv/install.ps1 | iex
-      shell: powershell
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
         
     - name: Install PyInstaller & UI Deps
       working-directory: ./python
@@ -30,10 +31,7 @@ jobs:
     - name: Build EXE with PyInstaller
       working-directory: ./python
       run: |
-        # 使用 PyInstaller 打包
-        # --noconsole: 不顯示 CMD 黑框
-        # --onefile: 包成單一檔案 (或者可以用 --onedir 比較快)
-        # --clean: 清除暫存
+        # 使用 PyInstaller 打包，移除缺失的 --icon 參數
         pyinstaller --noconsole --onefile --name "TotalSeg_Launcher" --hidden-import=PySide6.QtCore --hidden-import=PySide6.QtGui --hidden-import=PySide6.QtWidgets gui_pyside.py
         
     - name: Upload Artifact
