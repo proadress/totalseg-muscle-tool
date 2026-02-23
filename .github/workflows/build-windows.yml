@@ -3,11 +3,15 @@ name: Build Windows EXE
 on:
   push:
     branches: [ "main", "master" ]
+    tags:
+      - "v*"  # 當推送到 v1.0, v2.0 等標籤時觸發發布
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      exe_path: python/dist/TotalSeg_Launcher.exe
 
     steps:
     - uses: actions/checkout@v4
@@ -31,7 +35,6 @@ jobs:
     - name: Build EXE with PyInstaller
       working-directory: ./python
       run: |
-        # 使用 PyInstaller 打包，移除缺失的 --icon 參數
         pyinstaller --noconsole --onefile --name "TotalSeg_Launcher" --hidden-import=PySide6.QtCore --hidden-import=PySide6.QtGui --hidden-import=PySide6.QtWidgets gui_pyside.py
         
     - name: Upload Artifact
@@ -39,3 +42,28 @@ jobs:
       with:
         name: TotalSeg_Launcher_Windows
         path: python/dist/TotalSeg_Launcher.exe
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: TotalSeg_Launcher_Windows
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: TotalSeg_Launcher.exe
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## TotalSeg Launcher Windows Version
+            - 這是自動生成的 Windows 執行檔。
+            - 請下載後直接執行，程式會自動初始化環境。
+          draft: false
+          prerelease: false
+
