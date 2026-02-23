@@ -71,12 +71,8 @@ class TotalSegApp(QMainWindow):
         title_label = QLabel("Medical Image Segmentation Tool")
         title_label.setStyleSheet("font-size: 24px; font-weight: bold;")
         
-        self.theme_btn = QPushButton("Toggle Theme")
-        self.theme_btn.clicked.connect(self.toggle_theme)
-        
         header_layout.addWidget(title_label)
         header_layout.addStretch()
-        header_layout.addWidget(self.theme_btn)
         self.main_layout.addLayout(header_layout)
 
         # Tabs
@@ -113,7 +109,6 @@ class TotalSegApp(QMainWindow):
 
         # State Variables
         self.spacing_xy = None
-        self.current_theme = "light"
         
         # Batch Mode Variables
         self.is_batch_mode = False
@@ -285,14 +280,6 @@ class TotalSegApp(QMainWindow):
         
         layout.addLayout(btn_layout)
 
-    def toggle_theme(self):
-        if self.current_theme == "dark":
-            qdarktheme.setup_theme("light")
-            self.current_theme = "light"
-        else:
-            qdarktheme.setup_theme("dark")
-            self.current_theme = "dark"
-
     def select_dicom(self):
         folder = QFileDialog.getExistingDirectory(self, "Select DICOM Directory")
         if folder:
@@ -411,7 +398,7 @@ class TotalSegApp(QMainWindow):
                 avg_spacing = (self.spacing_xy[0] + self.spacing_xy[1]) / 2.0
                 approx_mm = iters * avg_spacing
                 self.erosion_mm_label.setText(f"Approx erosion: {approx_mm:.2f} mm")
-                self.erosion_mm_label.setStyleSheet("color: #198754;" if self.current_theme=="light" else "color: #20c997;")
+                self.erosion_mm_label.setStyleSheet("color: #198754;")
             else:
                 self.erosion_mm_label.setText("Approx erosion: N/A")
                 self.erosion_mm_label.setStyleSheet("color: gray;")

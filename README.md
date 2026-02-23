@@ -32,15 +32,12 @@ A medical image segmentation tool based on TotalSegmentator for CT image muscle 
 ### Quick Start
 
 #### **Windows**
-```bash
-# Double-click to launch
-launcher.bat
-```
+Double-click `TotalSeg_Launcher.exe` to launch. Background dependencies will be installed automatically on the first run.
 
 #### **Mac/Linux**
 ```bash
-# Double-click or run in terminal
-./launcher.sh
+cd python
+uv run gui_pyside.py
 ```
 
 ### System Requirements
@@ -128,17 +125,13 @@ uv run draw.py --dicom ../SER00005 --task tissue_4_types --fast 0 --spine 1 --er
 
 ```
 totalseg-muscle-tool/
-├── launcher.bat          # Windows launcher
-├── launcher.sh           # Mac/Linux launcher
-├── launcher.py           # GUI launcher core
+totalseg-muscle-tool/
+├── TotalSeg_Launcher_Windows.exe # Windows standalone executable
 └── python/
-    ├── gui_main.py       # Single file segmentation GUI
-    ├── batch_gui.py      # Batch processing GUI
-    ├── compare_gui.py    # Comparison tool GUI
+    ├── gui_pyside.py     # Unified PySide6 GUI (Single/Batch/Compare)
     ├── seg.py            # Segmentation core
-    ├── batch_seg.py      # Batch processing core
-    ├── draw.py           # Visualization
-    └── pyproject.toml    # Dependencies
+    ├── draw.py           # PNG Visualization
+    └── pyproject.toml    # Dependencies (uv)
 ```
 
 ### Testing
@@ -209,15 +202,12 @@ This project is open source for research and educational purposes.
 ### 快速開始
 
 #### **Windows**
-```bash
-# 雙擊執行
-launcher.bat
-```
+雙擊執行 `TotalSeg_Launcher_Windows.exe`。首次執行會自動在背景建立隔絕環境並安裝依賴套件。
 
 #### **Mac/Linux**
 ```bash
-# 雙擊或在終端機執行
-./launcher.sh
+cd python
+uv run gui_pyside.py
 ```
 
 ### 系統需求
@@ -305,17 +295,13 @@ uv run draw.py --dicom ../SER00005 --task tissue_4_types --fast 0 --spine 1 --er
 
 ```
 totalseg-muscle-tool/
-├── launcher.bat          # Windows 啟動器
-├── launcher.sh           # Mac/Linux 啟動器
-├── launcher.py           # GUI 啟動器核心
+totalseg-muscle-tool/
+├── TotalSeg_Launcher_Windows.exe # Windows 獨立執行檔 (Double-click to run)
 └── python/
-    ├── gui_main.py       # 單檔分割 GUI
-    ├── batch_gui.py      # 批次處理 GUI
-    ├── compare_gui.py    # 比較工具 GUI
-    ├── seg.py            # 分割核心
-    ├── batch_seg.py      # 批次處理核心
-    ├── draw.py           # 視覺化
-    └── pyproject.toml    # 依賴設定
+    ├── gui_pyside.py     # 統一的 PySide6 視覺化介面 (包含單檔、批次、比較)
+    ├── seg.py            # 分割核心演算法
+    ├── draw.py           # PNG 疊圖繪製
+    └── pyproject.toml    # 依賴套件清單 (uv)
 ```
 
 ### 測試
