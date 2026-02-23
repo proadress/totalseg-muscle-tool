@@ -7,7 +7,8 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QTabWidget, QLabel, QPushButton, QComboBox, QCheckBox, 
-    QLineEdit, QFileDialog, QPlainTextEdit, QGroupBox, QFormLayout
+    QLineEdit, QFileDialog, QPlainTextEdit, QGroupBox, QFormLayout,
+    QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PySide6.QtCore import Qt, QProcess, QTimer
 from PySide6.QtGui import QFont, QTextCursor
@@ -87,8 +88,9 @@ class TotalSegApp(QMainWindow):
         self.setup_single_tab()
         self.tabs.addTab(self.tab_single, "Single Segmentation")
 
-        # 2. Batch Segmentation Tab (Placeholder)
+        # 2. Batch Segmentation Tab
         self.tab_batch = QWidget()
+        self.setup_batch_tab()
         self.tabs.addTab(self.tab_batch, "Batch Segmentation")
 
         # 3. Compare Tab (Placeholder)
@@ -112,6 +114,11 @@ class TotalSegApp(QMainWindow):
         # State Variables
         self.spacing_xy = None
         self.current_theme = "light"
+        
+        # Batch Mode Variables
+        self.is_batch_mode = False
+        self.batch_queue = []
+        self.current_batch_index = -1
 
     def setup_single_tab(self):
         layout = QVBoxLayout(self.tab_single)
@@ -170,9 +177,9 @@ class TotalSegApp(QMainWindow):
         cfg_layout.addLayout(task_layout)
 
         # Checkboxes
-        self.chk_spine = QCheckBox("Spine segmentation (takes more time) ⚠️")
+        self.chk_spine = QCheckBox("Spine segmentation (takes more time)")
         self.chk_spine.setChecked(True)
-        self.chk_fast = QCheckBox("Fast mode (may reduce accuracy) ⚠️")
+        self.chk_fast = QCheckBox("Fast mode (may reduce accuracy)")
         self.chk_draw = QCheckBox("Export PNG overlays")
         self.chk_draw.setChecked(True)
         
@@ -209,6 +216,75 @@ class TotalSegApp(QMainWindow):
         layout.addLayout(btn_layout)
         layout.addStretch()
 
+    def setup_batch_tab(self):
+        layout = QVBoxLayout(self.tab_batch)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
+
+        # Config Panel (Top)
+        config_layout = QHBoxLayout()
+        
+        # Directories Group
+        dir_group = QGroupBox("Batch Directories")
+        dir_layout = QFormLayout(dir_group)
+        
+        # Root DICOM Row
+        dicom_layout = QHBoxLayout()
+        self.batch_dicom_btn = QPushButton("Select Root DICOM Folder")
+        self.batch_dicom_btn.clicked.connect(self.select_batch_dicom)
+        self.batch_dicom_label = QLineEdit()
+        self.batch_dicom_label.setPlaceholderText("Select folder containing multiple patients")
+        self.batch_dicom_label.setReadOnly(True)
+        dicom_layout.addWidget(self.batch_dicom_btn)
+        dicom_layout.addWidget(self.batch_dicom_label)
+        dir_layout.addRow(dicom_layout)
+
+        # Output Root Row
+        out_layout = QHBoxLayout()
+        self.batch_out_btn = QPushButton("Select Output Root")
+        self.batch_out_btn.clicked.connect(self.select_batch_output)
+        self.batch_out_label = QLineEdit()
+        self.batch_out_label.setPlaceholderText("Output folder for all results")
+        out_layout.addWidget(self.batch_out_btn)
+        out_layout.addWidget(self.batch_out_label)
+        dir_layout.addRow(out_layout)
+        
+        config_layout.addWidget(dir_group)
+
+        # Inherit settings visually (just labels referring to Single Tab settings for MVP)
+        settings_group = QGroupBox("Shared Configuration")
+        settings_layout = QVBoxLayout(settings_group)
+        settings_layout.addWidget(QLabel("[!] Batch mode uses the Task, Spine, Fast,"))
+        settings_layout.addWidget(QLabel("and Erosion settings from the 'Single' tab."))
+        settings_layout.addStretch()
+        config_layout.addWidget(settings_group)
+        
+        layout.addLayout(config_layout)
+
+        # Queue List Area (Middle)
+        self.batch_table = QTableWidget(0, 3)
+        self.batch_table.setHorizontalHeaderLabels(["Include", "Patient Folder Path", "Status"])
+        header = self.batch_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        layout.addWidget(self.batch_table)
+
+        # Start Button Layout
+        btn_layout = QHBoxLayout()
+        self.batch_progress_label = QLabel("0 / 0 Completed")
+        self.batch_progress_label.setStyleSheet("font-weight: bold; color: gray;")
+        btn_layout.addWidget(self.batch_progress_label)
+        btn_layout.addStretch()
+        self.btn_batch_start = QPushButton("Start Batch Processing")
+        self.btn_batch_start.setMinimumSize(200, 45)
+        self.btn_batch_start.setEnabled(False)
+        self.btn_batch_start.setStyleSheet("font-weight: bold;")
+        self.btn_batch_start.clicked.connect(self.start_batch_process)
+        btn_layout.addWidget(self.btn_batch_start)
+        
+        layout.addLayout(btn_layout)
+
     def toggle_theme(self):
         if self.current_theme == "dark":
             qdarktheme.setup_theme("light")
@@ -241,6 +317,83 @@ class TotalSegApp(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if folder:
             self.out_label.setText(folder)
+
+    def select_batch_dicom(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Root DICOM Directory")
+        if folder:
+            self.batch_dicom_label.setText(folder)
+            parent_dir = str(Path(folder).parent)
+            self.batch_out_label.setText(parent_dir + "_batch_output")
+            self.scan_batch_directory(folder)
+
+    def select_batch_output(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Batch Output Directory")
+        if folder:
+            self.batch_out_label.setText(folder)
+            
+    def scan_batch_directory(self, root_path):
+        self.batch_table.setRowCount(0)
+        root = Path(root_path)
+        valid_folders = []
+        
+        self.append_log(f"Scanning {root_path} for DICOM folders...\n")
+        
+        # Fast scan: looking for folders containing .dcm files
+        for sub_dir in root.rglob("*"):
+            if sub_dir.is_dir():
+                # Check if it contains at least one .dcm file directly
+                if any(sub_dir.glob("*.dcm")):
+                    valid_folders.append(sub_dir)
+
+        if not valid_folders:
+            self.append_log("[WARNING] No DICOM folders found in the selected root.\n")
+            self.btn_batch_start.setEnabled(False)
+            return
+
+        self.append_log(f"Found {len(valid_folders)} patient folders.\n")
+        self.batch_table.setRowCount(len(valid_folders))
+        
+        for i, folder in enumerate(valid_folders):
+            chk = QCheckBox()
+            chk.setChecked(True)
+            chk.stateChanged.connect(self.update_batch_start_button)
+            
+            # Center the checkbox
+            chk_widget = QWidget()
+            chk_layout = QHBoxLayout(chk_widget)
+            chk_layout.addWidget(chk)
+            chk_layout.setAlignment(Qt.AlignCenter)
+            chk_layout.setContentsMargins(0, 0, 0, 0)
+            
+            self.batch_table.setCellWidget(i, 0, chk_widget)
+            
+            # Store relative path for cleaner UI, but absolute path in data
+            rel_path = str(folder.relative_to(root))
+            path_item = QTableWidgetItem(rel_path)
+            path_item.setData(Qt.UserRole, str(folder))
+            self.batch_table.setItem(i, 1, path_item)
+            
+            status_item = QTableWidgetItem("Pending")
+            self.batch_table.setItem(i, 2, status_item)
+            
+        self.update_batch_start_button()
+
+    def update_batch_start_button(self):
+        checked_count = 0
+        for i in range(self.batch_table.rowCount()):
+            chk_widget = self.batch_table.cellWidget(i, 0)
+            chk = chk_widget.layout().itemAt(0).widget()
+            if chk.isChecked():
+                checked_count += 1
+                
+        if checked_count > 0 and self.batch_out_label.text().strip():
+            self.btn_batch_start.setEnabled(True)
+            self.btn_batch_start.setStyleSheet("background-color: #0d6efd; color: white; font-weight: bold;")
+            self.batch_progress_label.setText(f"0 / {checked_count} Completed")
+        else:
+            self.btn_batch_start.setEnabled(False)
+            self.btn_batch_start.setStyleSheet("font-weight: bold;")
+            self.batch_progress_label.setText("0 / 0 Completed")
 
     def validate_inputs(self):
         if self.dicom_label.text().strip() and self.out_label.text().strip():
@@ -285,6 +438,30 @@ class TotalSegApp(QMainWindow):
         # to not block the main UI thread. For simplicity, we create a QTimer to simulate async.
         QTimer.singleShot(100, self.run_setup_and_segmentation)
 
+    def start_batch_process(self):
+        self.log_area.clear()
+        self.btn_batch_start.setEnabled(False)
+        self.btn_batch_start.setText("Running Batch...")
+        self.batch_dicom_btn.setEnabled(False)
+        self.batch_out_btn.setEnabled(False)
+        
+        self.is_batch_mode = True
+        self.batch_queue = []
+        
+        # Build Queue
+        for i in range(self.batch_table.rowCount()):
+            chk_widget = self.batch_table.cellWidget(i, 0)
+            chk = chk_widget.layout().itemAt(0).widget()
+            if chk.isChecked():
+                dicom_path = self.batch_table.item(i, 1).data(Qt.UserRole)
+                out_name = Path(dicom_path).name
+                out_path = str(Path(self.batch_out_label.text()) / out_name)
+                self.batch_queue.append((i, dicom_path, out_path))
+                
+        self.current_batch_index = -1
+        
+        QTimer.singleShot(100, self.run_setup_and_segmentation)
+
     def run_setup_and_segmentation(self):
         try:
             # 1. Install uv if missing (blocking call here since it's just a small curl/powershell)
@@ -317,7 +494,10 @@ class TotalSegApp(QMainWindow):
 
         except Exception as e:
             self.append_log(f"[EXCEPTION] {str(e)}\n")
-            self.reset_ui()
+            if self.is_batch_mode:
+                self.reset_batch_ui()
+            else:
+                self.reset_ui()
 
     def handle_stdout(self):
         data = self.process.readAllStandardOutput()
@@ -333,19 +513,54 @@ class TotalSegApp(QMainWindow):
         if self.process_state == "sync":
             if self.process.exitCode() == 0:
                 self.append_log("\n[SUCCESS] Environment synced. Starting AI Inference...\n")
-                self.execute_segmentation()
+                if self.is_batch_mode:
+                    self.run_next_batch_task()
+                else:
+                    self.execute_segmentation()
             else:
                 self.append_log("\n[ERROR] Dependency sync failed.\n")
-                self.reset_ui()
+                if self.is_batch_mode:
+                    self.reset_batch_ui()
+                else:
+                    self.reset_ui()
         elif self.process_state == "seg":
             if self.process.exitCode() == 0:
                 self.append_log("\n[SUCCESS] Segmentation Completed!\n")
+                if self.is_batch_mode and self.current_batch_index >= 0:
+                    row = self.batch_queue[self.current_batch_index][0]
+                    self.batch_table.item(row, 2).setText("Success")
             else:
                 self.append_log(f"\n[ERROR] Segmentation Process exited with code {self.process.exitCode()}.\n")
-            self.reset_ui()
+                if self.is_batch_mode and self.current_batch_index >= 0:
+                    row = self.batch_queue[self.current_batch_index][0]
+                    self.batch_table.item(row, 2).setText("Failed")
+                    
+            if self.is_batch_mode:
+                self.run_next_batch_task()
+            else:
+                self.reset_ui()
 
-    def execute_segmentation(self):
-        self.btn_start.setText("Running Inference...")
+    def run_next_batch_task(self):
+        self.current_batch_index += 1
+        
+        if self.current_batch_index < len(self.batch_queue):
+            row, dicom_path, out_path = self.batch_queue[self.current_batch_index]
+            self.batch_table.item(row, 2).setText("Running")
+            self.batch_progress_label.setText(f"{self.current_batch_index} / {len(self.batch_queue)} Completed")
+            self.execute_segmentation(dicom_path=dicom_path, out_path=out_path)
+        else:
+            self.append_log("\n[SUCCESS] All batch tasks completed!\n")
+            self.batch_progress_label.setText(f"{len(self.batch_queue)} / {len(self.batch_queue)} Completed")
+            self.reset_batch_ui()
+
+    def execute_segmentation(self, dicom_path=None, out_path=None):
+        if not dicom_path:
+            dicom_path = self.dicom_label.text()
+        if not out_path:
+            out_path = self.out_label.text()
+            
+        if not self.is_batch_mode:
+            self.btn_start.setText("Running Inference...")
         
         target_script = "seg.py"
         
@@ -355,8 +570,8 @@ class TotalSegApp(QMainWindow):
 
         cmd_args = [
             "run", target_script,
-            "--dicom", self.dicom_label.text(),
-            "--out", self.out_label.text(),
+            "--dicom", dicom_path,
+            "--out", out_path,
             "--task", self.task_combo.currentText(),
             "--spine", "1" if self.chk_spine.isChecked() else "0",
             "--fast", "1" if self.chk_fast.isChecked() else "0",
@@ -369,10 +584,18 @@ class TotalSegApp(QMainWindow):
         self.process.start("uv", cmd_args)
 
     def reset_ui(self):
+        self.is_batch_mode = False
         self.btn_start.setText("Start Segmentation")
         self.btn_start.setEnabled(True)
         self.dicom_btn.setEnabled(True)
         self.out_btn.setEnabled(True)
+        
+    def reset_batch_ui(self):
+        self.is_batch_mode = False
+        self.btn_batch_start.setText("Start Batch Processing")
+        self.batch_dicom_btn.setEnabled(True)
+        self.batch_out_btn.setEnabled(True)
+        self.update_batch_start_button()
 
     def closeEvent(self, event):
         # Kill the QProcess cleanly

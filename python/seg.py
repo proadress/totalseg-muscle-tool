@@ -153,7 +153,7 @@ def get_mask_area_volume_and_hu(nii_path, ct_arr, spacing, resampler, erosion_it
 
 def merge_bilateral_hu_data(area_results, hu_results):
     """
-    ✅ 新增：合併左右肌肉的 HU（按面積加權平均）
+    # 新增：合併左右肌肉的 HU（按面積加權平均）
 
     Args:
         area_results: dict，每個肌肉的面積數組
@@ -283,9 +283,7 @@ def merge_bilateral_std_data(area_results, hu_results, std_results):
 
 def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir, erosion_iters=7):
     """
-    匯出每個 slice 的面積和 HU 值到 CSV
-
-    ✅ 修改：
+    # 修改：
     - 第一部分（面積）：保持左右分開
     - 第二部分（HU）：合併左右，按面積加權平均
     - 第三部分（HU std）：合併左右，按面積加權
@@ -335,7 +333,7 @@ def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir, erosion_ite
         hu_results[muscle_name] = slice_mean_hu
         hu_std_results[muscle_name] = slice_std_hu
 
-    # ✅ 合併左右的 HU 數據
+    # 合併左右的 HU 數據
     merged_hu, merged_muscles = merge_bilateral_hu_data(area_results, hu_results)
     merged_std, merged_std_muscles = merge_bilateral_std_data(
         area_results, hu_results, hu_std_results
@@ -416,7 +414,7 @@ def export_areas_and_volumes_to_csv(mask_dir, output_csv, dicom_dir, erosion_ite
 
 def merge_statistics_to_csv(mask_dir, output_csv):
     """
-    ✅ 修改：讀取 statistics.json，合併左右肌肉的數據，加入器官級 mean_hu
+    # 修改：讀取 statistics.json，合併左右肌肉的數據，加入器官級 mean_hu
 
     合併邏輯：
     - pixelcount: 相加
@@ -460,7 +458,7 @@ def merge_statistics_to_csv(mask_dir, output_csv):
     summary_reader = csv.DictReader(existing_lines[summary_start_idx:])
     summary_rows = list(summary_reader)
 
-    # ✅ 合併左右肌肉的數據
+    # 合併左右肌肉的數據
     merged_summary = {}
     processed = set()
 
@@ -626,7 +624,7 @@ def main():
 
     if args.fast:
         print(
-            "⚠ Note: Fast mode is enabled. Speed prioritized over accuracy. For preview only."
+            "Note: Fast mode is enabled. Speed prioritized over accuracy. For preview only."
         )
 
     dicom_path = Path(args.dicom)
