@@ -21,10 +21,32 @@ except ImportError:
     sitk = None
 
 
-# Get the directory where the current script or EXE is located
-if getattr(sys, 'frozen', False):
-    BASE_DIR = Path(sys.executable).parent
+# Determine if running as a bundled PyInstaller EXE
+import platform
+IS_BUNDLED = getattr(sys, 'frozen', False)
+
+if IS_BUNDLED:
+    # 這是使用者放 EXE 的那個真實資料夾 (例如桌面)
+    EXE_DIR = Path(sys.executable).parent
+    # 我們在旁邊悄悄建一個後端資料夾
+    BASE_DIR = EXE_DIR / "TotalSeg_Backend"
+    
+    # 這是 PyInstaller 肚子裡解壓縮出來的純淨原始檔案
+    MEIPASS_DIR = Path(sys._MEIPASS)
+    
+    # 確保後端資料夾存在
+    BASE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # 應該要解壓縮的配方檔
+    required_files = ["pyproject.toml", "uv.lock", "seg.py"]
+    for f in required_files:
+        src = MEIPASS_DIR / f
+        dst = BASE_DIR / f
+        # 只要肚子裡有，就覆蓋過去旁邊的資料夾 (達成無腦升級)
+        if src.exists():
+            shutil.copy2(src, dst)
 else:
+    # 這是你在 Mac/開發環境下跑的目錄
     BASE_DIR = Path(__file__).parent
 
 class TotalSegApp(QMainWindow):
@@ -325,8 +347,11 @@ class TotalSegApp(QMainWindow):
     def execute_segmentation(self):
         self.btn_start.setText("Running Inference...")
         
-        mock_script = Path(__file__).parent / "mock_seg.py"
-        target_script = "mock_seg.py" if mock_script.exists() else "seg.py"
+        target_script = "seg.py"
+        
+        # 檢查是否有 mock_seg.py (用於開發與初次測試)
+        if (BASE_DIR / "mock_seg.py").exists():
+            target_script = "mock_seg.py"
 
         cmd_args = [
             "run", target_script,

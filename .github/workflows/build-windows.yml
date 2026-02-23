@@ -35,7 +35,17 @@ jobs:
     - name: Build EXE with PyInstaller
       working-directory: ./python
       run: |
-        pyinstaller --noconsole --onefile --name "TotalSeg_Launcher" --hidden-import=PySide6.QtCore --hidden-import=PySide6.QtGui --hidden-import=PySide6.QtWidgets gui_pyside.py
+        # 準備需要打進 EXE 肚子的檔案清單
+        # 在 Windows 上，PyInstaller 的 --add-data 語法是 "來源路徑;目標路徑"
+        pyinstaller --noconsole --onefile --name "TotalSeg_Launcher" `
+          --add-data "pyproject.toml;." `
+          --add-data "uv.lock;." `
+          --add-data "seg.py;." `
+          --add-data "mock_seg.py;." `
+          --hidden-import=PySide6.QtCore `
+          --hidden-import=PySide6.QtGui `
+          --hidden-import=PySide6.QtWidgets `
+          gui_pyside.py
         
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
