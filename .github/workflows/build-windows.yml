@@ -1,0 +1,43 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        
+    - name: Install uv
+      run: curl -LsSf https://astral.sh/uv/install.ps1 | iex
+      shell: powershell
+        
+    - name: Install PyInstaller & UI Deps
+      working-directory: ./python
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller PySide6 pyqtdarktheme
+        
+    - name: Build EXE with PyInstaller
+      working-directory: ./python
+      run: |
+        # 使用 PyInstaller 打包
+        # --noconsole: 不顯示 CMD 黑框
+        # --onefile: 包成單一檔案 (或者可以用 --onedir 比較快)
+        # --clean: 清除暫存
+        pyinstaller --noconsole --onefile --name "TotalSeg_Launcher" --hidden-import=PySide6.QtCore --hidden-import=PySide6.QtGui --hidden-import=PySide6.QtWidgets gui_pyside.py
+        
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: TotalSeg_Launcher_Windows
+        path: python/dist/TotalSeg_Launcher.exe
