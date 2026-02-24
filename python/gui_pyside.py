@@ -8,7 +8,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QPushButton, QComboBox, QCheckBox, QFrame,
     QLineEdit, QFileDialog, QPlainTextEdit, QGroupBox, QFormLayout,
-    QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QStackedWidget
+    QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QStackedWidget,
+    QMessageBox, QAbstractItemView
 )
 from PySide6.QtCore import Qt, QProcess, QTimer, QSize
 from PySide6.QtGui import QFont, QTextCursor, QIcon, QColor
@@ -157,6 +158,45 @@ QLineEdit {
     background-color: white;
 }
 """
+
+TASK_OPTIONS = [
+    "abdominal_muscles",
+    "aortic_sinuses",
+    "appendicular_bones",
+    "appendicular_bones_mr",
+    "body",
+    "body_mr",
+    "brain_structures",
+    "breasts",
+    "cerebral_bleed",
+    "coronary_arteries",
+    "craniofacial_structures",
+    "face",
+    "face_mr",
+    "head_glands_cavities",
+    "head_muscles",
+    "headneck_bones_vessels",
+    "headneck_muscles",
+    "heartchambers_highres",
+    "hip_implant",
+    "kidney_cysts",
+    "liver_segments",
+    "liver_segments_mr",
+    "lung_nodules",
+    "lung_vessels",
+    "oculomotor_muscles",
+    "pleural_pericard_effusion",
+    "thigh_shoulder_muscles",
+    "thigh_shoulder_muscles_mr",
+    "tissue_4_types",
+    "tissue_types",
+    "tissue_types_mr",
+    "ventricle_parts",
+    "vertebrae_body",
+    "vertebrae_mr",
+    "total_mr",
+    "total",
+]
 
 class TotalSegApp(QMainWindow):
     def __init__(self):
@@ -312,12 +352,14 @@ class TotalSegApp(QMainWindow):
         
         self.modality_combo = QComboBox()
         self.modality_combo.addItems(["CT", "MRI"])
+        self.modality_combo.setMaxVisibleItems(12)
+        self.modality_combo.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         grid_layout.addRow("影像類別:", self.modality_combo)
         
         self.task_combo = QComboBox()
-        self.task_combo.addItems([
-            "abdominal_muscles", "body", "spine", "thigh_shoulder_muscles", "total"
-        ])
+        self.task_combo.addItems(TASK_OPTIONS)
+        self.task_combo.setMaxVisibleItems(12)
+        self.task_combo.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         grid_layout.addRow("分割任務:", self.task_combo)
         
         cfg_layout.addLayout(grid_layout)
@@ -399,6 +441,9 @@ class TotalSegApp(QMainWindow):
         self.task_table.setAlternatingRowColors(True)
         self.task_table.setStyleSheet("alternate-background-color: #fafbfc; selection-background-color: #e7f1ff;")
         self.task_table.verticalHeader().setVisible(False)
+        self.task_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.task_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.task_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         
         right_layout.addWidget(self.task_table)
 
@@ -707,8 +752,16 @@ class TotalSegApp(QMainWindow):
                 self.append_log("[系統] 正在安裝『uv』環境管理工具...\n")
                 cmd = 'powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"' if os.name == 'nt' else 'curl -LsSf https://astral.sh/uv/install.sh | sh'
                 subprocess.run(cmd, shell=True, capture_output=True)
-                uv_path = os.path.expanduser("~\\.cargo\\bin") if os.name == 'nt' else os.path.expanduser("~/.cargo/bin")
-                os.environ["PATH"] += os.pathsep + uv_path
+                if os.name == "nt":
+                    uv_paths = [
+                        os.path.expanduser("~\\.local\\bin"),
+                        os.path.expanduser("~\\.cargo\\bin"),
+                    ]
+                else:
+                    uv_paths = [os.path.expanduser("~/.local/bin"), os.path.expanduser("~/.cargo/bin")]
+                for uv_path in uv_paths:
+                    if uv_path not in os.environ.get("PATH", ""):
+                        os.environ["PATH"] += os.pathsep + uv_path
 
             self.append_log("同步 AI 引擎環境中...\n")
             self.process_state = "sync"
