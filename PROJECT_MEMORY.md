@@ -1,7 +1,7 @@
-# Project Memory: TotalSeg Muscle Tool (v1.0.0)
+# Project Memory: TotalSeg Muscle Tool (v0.0.1)
 
 ## 📌 專案概述 (Project Overview)
-本專案為一套專為醫學影像分析設計的工具，基於 TotalSegmentator 預訓練模型，提供 CT/MRI 影像的肌肉分割與統計功能。目前已達成 v1.0.0 階段，擁有統一的 PySide6 圖形介面。
+本專案為一套專為醫學影像分析設計的工具，基於 TotalSegmentator 預訓練模型，提供 CT/MRI 影像的肌肉分割與統計功能。目前已穩定至 v0.0.1 階段，採用輕量、免安裝、不依賴系統權限的 `.bat` 與 `.zip` 部署架構。
 
 ## 🛠️ 技術架構 (Technical Stack)
 - **核心引擎**: `seg.py` (呼叫 TotalSegmentator API)
@@ -16,11 +16,9 @@
 - **專家級診斷系統**: UI 內建解決方案引擎，將技術報錯轉譯為醫學建議。
 - **全中文化**: 介面完成台灣繁體用語優化。
 
-- 已移除過時的單獨介面檔與冗餘腳本 (`gui_main.py`, `batch_gui.py`, `compare_gui.py`, `start.py`, `batch_seg.py`)。
-- **全面移除 legacy 啟動腳本**: 刪除了 `START 啟動.bat`。
-- **全面移除 Mock 邏輯**: 刪除了 `mock_seg.py` 與所有 `mock_*` 資料集，確保程式在任何平台皆執行真實後端。
-- 專案根目錄已完成隱藏檔與開發測試資料的 `.gitignore` 配置。
+- 已移除過時的單獨介面檔與冗餘腳本 (`gui_main.py`, `batch_gui.py`, `compare_gui.py`, `start.py`, `batch_seg.py`, `test_compare.py`)。
+- **全面移除 EXE 打包架構與 CI/CD**: 為了適應醫院高資安環境 (繞過 SmartScreen 警告與防毒軟體誤判)，我們捨棄了 GitHub Actions 的 `.exe` 打包路徑，回歸最原始但最穩定的原始碼 `Zip + START 啟動.bat`。
 
-## 🚀 未來展望 (Next Steps)
-- **Windows 打包**: 下一階段可考慮使用 PyInstaller 將 `gui_pyside.py` 打包成獨立的 `.exe` 以方便在無 Python 環境的電腦執行。
-- **自動更新**: 實作檢查 GitHub Release 並自動同步最新版的功能。
+## 🚀 部署與更新策略 (Deployment Strategy)
+- **隨放即用 (Drop Anywhere)**: 利用 Windows 批次檔的彈性，資料夾解壓縮在哪裡都能跑，**完全免疫中文路徑導致的 PyTorch 報錯**。
+- **快取秒開 (Cache Advantage)**: 利用 `uv` 全域快取，即使未來醫生刪除舊資料夾解壓縮新版，也能 1 秒內重建環境，不需重新下載數 GB 模型。
