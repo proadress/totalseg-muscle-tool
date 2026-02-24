@@ -5,12 +5,23 @@ REM Default: launch hidden console to avoid duplicate black cmd window.
 REM Debug mode: pass --show-console to keep this window visible.
 if /I not "%~1"=="--show-console" (
     if /I not "%~1"=="__hidden__" (
+        where cscript >nul 2>&1
+        if %errorlevel% neq 0 (
+            echo [WARN] cscript unavailable, fallback to visible console.
+            echo [警告] cscript 不可用，已自動改為顯示命令視窗。
+            goto :launcher_start
+        )
         set "_vbs=%temp%\totalseg_hidden_%random%.vbs"
         >"%_vbs%" echo Set WshShell = CreateObject("WScript.Shell")
         >>"%_vbs%" echo WshShell.Run """" ^& WScript.Arguments(0) ^& """ __hidden__"", 0, False
         cscript //nologo "%_vbs%" "%~f0"
+        set "_hide_rc=%errorlevel%"
         del "%_vbs%" >nul 2>&1
-        exit /b
+        if "%_hide_rc%"=="0" (
+            exit /b
+        )
+        echo [WARN] Hidden launch unavailable, fallback to visible console.
+        echo [警告] 無法隱藏啟動，已自動改為顯示命令視窗。
     )
 ) else (
     shift
@@ -18,6 +29,7 @@ if /I not "%~1"=="--show-console" (
 
 if /I "%~1"=="__hidden__" shift
 
+:launcher_start
 REM ========================================
 REM TotalSegmentator Tool Launcher (Windows)
 REM 雙擊執行 | Double-click to run
