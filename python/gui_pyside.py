@@ -161,7 +161,7 @@ QLineEdit {
 class TotalSegApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TotalSegmentator AI 影像管理系統 v1.0.0")
+        self.setWindowTitle("TotalSegmentator AI 影像管理系統 v0.0.1")
         self.resize(1150, 850)
         self.setStyleSheet(MODERN_STYLE)
 

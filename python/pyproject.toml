@@ -1,6 +1,6 @@
 [project]
 name = "calculate-muscle-areas"
-version = "0.1.0"
+version = "0.0.1"
 description = "Muscle Area Calculator using TotalSegmentator"
 requires-python = ">=3.10,<3.11"
 dependencies = [
@@ -31,3 +31,11 @@ explicit = true
 torch = { index = "pytorch-cu121", marker = "sys_platform != 'darwin'" }
 torchvision = { index = "pytorch-cu121", marker = "sys_platform != 'darwin'" }
 torchaudio = { index = "pytorch-cu121", marker = "sys_platform != 'darwin'" }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -22,3 +22,13 @@
 ## 🚀 部署與更新策略 (Deployment Strategy)
 - **隨放即用 (Drop Anywhere)**: 利用 Windows 批次檔的彈性，資料夾解壓縮在哪裡都能跑，**完全免疫中文路徑導致的 PyTorch 報錯**。
 - **快取秒開 (Cache Advantage)**: 利用 `uv` 全域快取，即使未來醫生刪除舊資料夾解壓縮新版，也能 1 秒內重建環境，不需重新下載數 GB 模型。
+
+## 🧪 最終考察紀錄 (Final QA, 2026-02-24)
+- **已修復** `draw.py` 語法錯誤：補回 `dicom_to_overlay_png(...)` 函式定義，解除 `SyntaxError: unmatched ')'`。
+- **已修復** `seg.py` 自動繪圖參數 bug：避免傳入 `--out None`，且 `slice_start/slice_end` 為空時不再傳遞空字串。
+- **已修復** 版本一致性：`README.md`、`PROJECT_MEMORY.md`、`gui_pyside.py` 視窗標題、`pyproject.toml`、`seg.py --help` 描述統一為 `v0.0.1`。
+- **已新增** 測試框架：建立 `pytest` dev 依賴與 `python/tests/` 測試目錄，新增 auto-draw 參數組裝回歸測試（2 tests）。
+- **驗收結果**：
+  - `uv run --project python --with pytest pytest -q` → `2 passed`
+  - `python3 -m py_compile python/draw.py python/seg.py python/gui_pyside.py python/auto_draw_cmd.py` → 通過
+  - `uv run --project python python/seg.py --help` / `draw.py --help` → 入口正常

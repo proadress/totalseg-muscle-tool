@@ -179,6 +179,14 @@ def erode_mask_slice(mask_slice, erosion_iters):
     return eroded.astype(bool)
 
 
+def dicom_to_overlay_png(
+    dicom_dir: Path,
+    out_dir: Path,
+    masks_dir: Path = None,
+    show_spine=True,
+    task_name="abdominal_muscles",
+    fast=False,
+    erosion_iters=7,
     eroded_out_dir: Path = None,
     slice_start=None,
     slice_end=None,

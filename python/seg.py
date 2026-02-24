@@ -12,6 +12,7 @@ import shutil
 import tempfile
 import time
 from datetime import datetime
+from auto_draw_cmd import build_auto_draw_command
 
 VERTEBRAE_LABELS = (
     [f"vertebrae_C{i}" for i in range(1, 8)]
@@ -605,7 +606,7 @@ def run_task(dicom_path, out_dir, task, fast=False, roi_subset=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Segmentation pipeline v1.1 - 自動合併左右肌肉"
+        description="Segmentation pipeline v0.0.1 - 自動合併左右肌肉"
     )
     parser.add_argument("--dicom", type=str, default="test", help="DICOM folder path")
     parser.add_argument("--out", type=str, default=None, help="Output folder")
@@ -715,30 +716,17 @@ def main():
     if args.auto_draw:
         draw_t0 = time.perf_counter()
         log_info("Stage: auto_draw started")
-        subprocess.run(
-            [
-                "uv",
-                "run",
-                "draw.py",
-                "--dicom",
-                str(args.dicom),
-                "--out",
-                str(args.out),
-                "--task",
-                str(args.task),
-                "--spine",
-                str(args.spine),
-                "--fast",
-                str(args.fast),
-                "--erosion_iters",
-                str(args.erosion_iters),
-                "--slice_start",
-                str(args.slice_start) if args.slice_start else "",
-                "--slice_end",
-                str(args.slice_end) if args.slice_end else "",
-            ],
-            check=True,
+        draw_cmd = build_auto_draw_command(
+            dicom=args.dicom,
+            out=args.out,
+            task=args.task,
+            spine=args.spine,
+            fast=args.fast,
+            erosion_iters=args.erosion_iters,
+            slice_start=args.slice_start,
+            slice_end=args.slice_end,
         )
+        subprocess.run(draw_cmd, check=True)
         log_info(f"Stage: auto_draw completed in {time.perf_counter()-draw_t0:.2f}s")
 
     log_info(f"Pipeline completed in {time.perf_counter()-pipeline_t0:.2f}s")
