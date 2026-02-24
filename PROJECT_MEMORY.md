@@ -16,8 +16,7 @@
 - **專家級診斷系統**: UI 內建解決方案引擎，將技術報錯轉譯為醫學建議。
 - **全中文化**: 介面完成台灣繁體用語優化。
 
-## 🧹 清理紀錄 (Cleanup History)
-- 已移除過時的單獨介面檔 (`gui_main.py`, `batch_gui.py`, `compare_gui.py`, `start.py`)。
+- 已移除過時的單獨介面檔與冗餘腳本 (`gui_main.py`, `batch_gui.py`, `compare_gui.py`, `start.py`, `batch_seg.py`)。
 - **全面移除 legacy 啟動腳本**: 刪除了 `START 啟動.bat`。
 - **全面移除 Mock 邏輯**: 刪除了 `mock_seg.py` 與所有 `mock_*` 資料集，確保程式在任何平台皆執行真實後端。
 - 專案根目錄已完成隱藏檔與開發測試資料的 `.gitignore` 配置。

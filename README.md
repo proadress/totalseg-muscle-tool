@@ -20,7 +20,7 @@ A medical image segmentation tool based on TotalSegmentator for CT image muscle 
 ### Quick Start
 
 #### **Windows**
-Double-click `TotalSeg_Launcher.exe` (Windows) or double-click the bundled App (Mac) to launch. Background dependencies will be auto-managed on first run.
+Double-click `START 啟動.bat` (Windows) or run `uv run python/gui_pyside.py` (Mac/Linux) to launch. Background dependencies will be auto-managed on first run via `uv`.
 
 #### **Mac/Linux**
 ```bash
@@ -113,7 +113,7 @@ uv run gui_pyside.py  # Switch to Comparison tab in unified UI
 ```
 totalseg-muscle-tool/
 totalseg-muscle-tool/
-├── TotalSeg_Launcher.exe   # Windows standalone launcher
+├── START 啟動.bat          # Windows double-click launcher
 └── python/
     ├── gui_pyside.py     # Unified PySide6 GUI (Single/Batch/Compare)
     ├── seg.py            # Segmentation core
@@ -177,7 +177,9 @@ This project is open source for research and educational purposes.
 ### 快速開始
 
 #### **Windows**
-雙擊執行 `TotalSeg_Launcher.exe` (Windows) 或執行打包好的 App (Mac)。首次執行會自動完成環境配置。
+雙擊執行 `START 啟動.bat` (Windows) 啟動程式。首次執行會自動完成環境配置。
+
+> ⚠️ **溫馨提示**：若啟動失敗或無法讀取檔案，建議將解壓縮後的資料夾移至 **C 槽或 D 槽等純英文路徑下**執行，以避免 Windows 中文路徑造成的不可預期錯誤。
 
 #### **Mac/Linux**
 ```bash
@@ -268,7 +270,7 @@ uv run gui_pyside.py  # 在統一介面中切換至「比較分析」分頁
 ```
 totalseg-muscle-tool/
 totalseg-muscle-tool/
-├── TotalSeg_Launcher_Windows.exe # Windows 獨立執行檔 (Double-click to run)
+├── START 啟動.bat                # Windows 雙擊啟動腳本
 └── python/
     ├── gui_pyside.py     # 統一的 PySide6 視覺化介面 (包含單檔、批次、比較)
     ├── seg.py            # 分割核心演算法
